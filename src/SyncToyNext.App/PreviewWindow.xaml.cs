@@ -253,9 +253,7 @@ public partial class PreviewWindow : Window
         Progress.Visibility = Visibility.Visible;
         Progress.IsIndeterminate = false;
         Progress.Value = 0.35;
-        ProgressText.Visibility = Visibility.Collapsed;
-        TransferPanel.Visibility = Visibility.Visible;
-        FollowCheckBox.Visibility = Visibility.Visible;
+        SetTransferLayout(true);
         RunButton.IsEnabled = false;
         TransferText.Text = "Aktion 255 von 7.339 · 1,21 GB von 3,45 GB (35 %)";
         TransferTimeText.Text = "24,6 MB/s · noch etwa 2 Min. · 0:51 vergangen";
@@ -439,9 +437,7 @@ public partial class PreviewWindow : Window
         var estimator = new TransferEstimator();
         OperationRow? activeRow = null;
         long lastFollow = 0;
-        ProgressText.Visibility = Visibility.Collapsed;
-        TransferPanel.Visibility = Visibility.Visible;
-        FollowCheckBox.Visibility = Visibility.Visible;
+        SetTransferLayout(true);
 
         void ShowTransfer(FolderPair pair, SyncProgress p, long baseBytes, int baseOps)
         {
@@ -540,9 +536,7 @@ public partial class PreviewWindow : Window
         }
 
         if (activeRow is not null) activeRow.RunningText = null;
-        TransferPanel.Visibility = Visibility.Collapsed;
-        FollowCheckBox.Visibility = Visibility.Collapsed;
-        ProgressText.Visibility = Visibility.Visible;
+        SetTransferLayout(false);
         SetBusy(false, "");
         Progress.Visibility = Visibility.Visible;
         if (!cancelled) Progress.Value = 1;
@@ -583,6 +577,22 @@ public partial class PreviewWindow : Window
         HeaderGlyph.Text = ResultGlyph.Text;
         ResultBar.Visibility = Visibility.Visible;
         CloseButton.Focus();
+    }
+
+    /// <summary>
+    /// Während der Ausführung steht der Fortschritt über die volle Breite oberhalb der Schaltflächen,
+    /// damit Menge, Tempo, Restzeit und Dateiname auch bei schmalem Fenster lesbar bleiben.
+    /// </summary>
+    private void SetTransferLayout(bool transfer)
+    {
+        System.Windows.Controls.Grid.SetRow(ProgressArea, transfer ? 0 : 1);
+        System.Windows.Controls.Grid.SetColumnSpan(ProgressArea, transfer ? 2 : 1);
+        ProgressArea.Margin = transfer ? new Thickness(0, 0, 0, 12) : new Thickness(0, 0, 20, 0);
+        var visibility = transfer ? Visibility.Visible : Visibility.Collapsed;
+        TransferHeader.Visibility = visibility;
+        TransferFile.Visibility = visibility;
+        FollowCheckBox.Visibility = visibility;
+        ProgressText.Visibility = transfer ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void SetBusy(bool busy, string text)

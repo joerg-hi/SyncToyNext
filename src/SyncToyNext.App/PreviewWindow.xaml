@@ -340,10 +340,48 @@
         <Border Grid.Row="4" Margin="0,12,0,0" BorderThickness="0,1,0,0"
                 BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
                 Background="{DynamicResource LayerFillColorDefaultBrush}" Padding="24,12">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <CheckBox x:Name="FollowCheckBox" Content="Laufende Datei zeigen" IsChecked="True" Visibility="Collapsed"
-                              Margin="0,0,16,0" ToolTip="Blättert die Tabelle automatisch zur Datei, die gerade bearbeitet wird." />
+            <!-- Während der Ausführung wandert der Fortschritt in die obere Zeile über die volle Breite (siehe SetTransferLayout). -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel x:Name="ProgressArea" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,20,0">
+                    <!-- Gesamtstand, Tempo und Restzeit -->
+                    <DockPanel x:Name="TransferHeader" Visibility="Collapsed" Margin="0,0,0,6">
+                        <TextBlock x:Name="TransferTimeText" DockPanel.Dock="Right" Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Bottom" Margin="16,0,0,0" />
+                        <TextBlock x:Name="TransferText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                    </DockPanel>
+
+                    <ProgressBar x:Name="Progress" Height="4" Maximum="1" Visibility="Hidden" />
+                    <TextBlock x:Name="ProgressText" Style="{StaticResource CaptionText}" TextTrimming="CharacterEllipsis"
+                               TextWrapping="NoWrap" Margin="0,6,0,0" />
+
+                    <!-- Die laufende Datei; große Dateien mit eigenem Balken -->
+                    <StackPanel x:Name="TransferFile" Visibility="Collapsed" Margin="0,8,0,0">
+                        <DockPanel>
+                            <TextBlock x:Name="CurrentFileAmountText" DockPanel.Dock="Right" Style="{StaticResource CaptionText}"
+                                       Margin="16,0,0,0" />
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE8A5;" FontSize="12" Margin="0,1,6,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="CurrentFileText" Style="{StaticResource CaptionText}"
+                                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                        </DockPanel>
+                        <ProgressBar x:Name="CurrentFileProgress" Height="3" Maximum="1" Margin="0,5,0,0" Visibility="Hidden" />
+                    </StackPanel>
+                </StackPanel>
+
+                <CheckBox x:Name="FollowCheckBox" Grid.Row="1" Grid.Column="0" Content="Laufende Datei in der Tabelle zeigen"
+                          IsChecked="True" Visibility="Collapsed" VerticalAlignment="Center"
+                          ToolTip="Blättert die Tabelle automatisch zur Datei, die gerade bearbeitet wird." />
+
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="RunButton" Style="{StaticResource PrimaryButton}" Click="Run_Click" IsEnabled="False">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource Glyph}" Text="&#xE768;" />
@@ -358,30 +396,7 @@
                     </Button>
                     <Button x:Name="CloseButton" Content="Schließen" Click="Close_Click" MinWidth="110" Margin="8,0,0,0" />
                 </StackPanel>
-                <StackPanel VerticalAlignment="Center" Margin="0,0,20,0">
-                    <ProgressBar x:Name="Progress" Height="4" Maximum="1" Visibility="Hidden" />
-                    <TextBlock x:Name="ProgressText" Style="{StaticResource CaptionText}" TextTrimming="CharacterEllipsis"
-                               TextWrapping="NoWrap" Margin="0,6,0,0" />
-
-                    <!-- Während der Ausführung: Gesamtstand, Tempo, Restzeit und die laufende Datei -->
-                    <StackPanel x:Name="TransferPanel" Visibility="Collapsed" Margin="0,6,0,0">
-                        <DockPanel>
-                            <TextBlock x:Name="TransferTimeText" DockPanel.Dock="Right" Style="{StaticResource CaptionText}"
-                                       Margin="16,0,0,0" />
-                            <TextBlock x:Name="TransferText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
-                        </DockPanel>
-                        <DockPanel Margin="0,8,0,0">
-                            <TextBlock x:Name="CurrentFileAmountText" DockPanel.Dock="Right" Style="{StaticResource CaptionText}"
-                                       Margin="16,0,0,0" />
-                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE8A5;" FontSize="12" Margin="0,1,6,0"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            <TextBlock x:Name="CurrentFileText" Style="{StaticResource CaptionText}"
-                                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
-                        </DockPanel>
-                        <ProgressBar x:Name="CurrentFileProgress" Height="3" Maximum="1" Margin="0,5,0,0" Visibility="Hidden" />
-                    </StackPanel>
-                </StackPanel>
-            </DockPanel>
+            </Grid>
         </Border>
     </Grid>
 </Window>
