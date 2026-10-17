@@ -91,9 +91,13 @@ public class TransferProgressTests
 
         var results = CopySpeedTest.Run(t.PathOf(Left, "test.bin"), t.Right);
 
-        var m = Assert.Single(results); // unter Linux nur blockweise
-        Assert.Null(m.Error);
-        Assert.Equal(200_000, m.Bytes);
+        // Unter Windows beide Verfahren, sonst nur blockweise.
+        Assert.Equal(OperatingSystem.IsWindows() ? 2 : 1, results.Count);
+        Assert.All(results, m =>
+        {
+            Assert.Null(m.Error);
+            Assert.Equal(200_000, m.Bytes);
+        });
         Assert.Empty(Directory.EnumerateFileSystemEntries(t.Right));
     }
 

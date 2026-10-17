@@ -66,14 +66,20 @@ public sealed class SyncEngine
         int leftDone = 0, rightDone = 0, scanning = 1;
         var leftMonitor = new ScanMonitor();
         var rightMonitor = new ScanMonitor();
+        var reportGate = new object();
         void Report()
         {
-            if (Volatile.Read(ref scanning) == 0) return; // späte Meldung des Zeitgebers
-            bool ld = Volatile.Read(ref leftDone) == 1, rd = Volatile.Read(ref rightDone) == 1;
-            int l = leftMonitor.Count, r = rightMonitor.Count;
-            progress?.Report(new PreviewProgress(PreviewStage.Scanning, l + r, l, r, ld, rd,
-                ld ? null : new ScanActivity(leftMonitor.LongestReadingFolder, leftMonitor.SinceLastActivity),
-                rd ? null : new ScanActivity(rightMonitor.LongestReadingFolder, rightMonitor.SinceLastActivity)));
+            // Unter Sperre lesen und melden, damit die Meldungen in derselben Reihenfolge ankommen,
+            // in der der Stand gelesen wurde (sonst kann eine ältere Meldung die neueste überholen).
+            lock (reportGate)
+            {
+                if (scanning == 0) return; // späte Meldung des Zeitgebers
+                bool ld = Volatile.Read(ref leftDone) == 1, rd = Volatile.Read(ref rightDone) == 1;
+                int l = leftMonitor.Count, r = rightMonitor.Count;
+                progress?.Report(new PreviewProgress(PreviewStage.Scanning, l + r, l, r, ld, rd,
+                    ld ? null : new ScanActivity(leftMonitor.LongestReadingFolder, leftMonitor.SinceLastActivity),
+                    rd ? null : new ScanActivity(rightMonitor.LongestReadingFolder, rightMonitor.SinceLastActivity)));
+            }
         }
 
         // Regelmäßig melden, auch wenn ein Laufwerk gerade nicht antwortet: Dann sieht man, seit wann.
@@ -112,7 +118,7 @@ public sealed class SyncEngine
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
         }
 
-        Volatile.Write(ref scanning, 0);
+        lock (reportGate) scanning = 0;
         cancellationToken.ThrowIfCancellationRequested();
         var warnings = leftWarnings.Concat(rightWarnings).ToList();
         progress?.Report(new PreviewProgress(PreviewStage.Comparing, leftTask.Result.Count + rightTask.Result.Count,
