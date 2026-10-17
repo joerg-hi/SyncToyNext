@@ -86,7 +86,7 @@ public partial class PreviewWindow : Window
     {
         SetBusy(true, "Ordner werden eingelesen …");
         SetTaskbar(TaskbarItemProgressState.Indeterminate, 0);
-        WorkingPanel.Visibility = Visibility.Visible;
+        SetWorking(true);
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
 
@@ -166,7 +166,7 @@ public partial class PreviewWindow : Window
             _view = CreateView(_rows);
         }
 
-        WorkingPanel.Visibility = Visibility.Collapsed;
+        SetWorking(false);
 
         bool cancelled = token.IsCancellationRequested;
         SetBusy(false, cancelled ? "Vorschau abgebrochen." : "");
@@ -232,10 +232,17 @@ public partial class PreviewWindow : Window
         StepsList.ItemsSource = steps.All;
         UpdateSteps(steps, pair, new PreviewProgress(PreviewStage.Scanning, 274852, 120345, 154507, LeftDone: true));
         WorkingTitle.Text = "Was passiert gerade?";
-        WorkingPanel.Visibility = Visibility.Visible;
+        SetWorking(true);
         Progress.Visibility = Visibility.Visible;
         Progress.IsIndeterminate = true;
         ProgressText.Text = $"Lese „{pair.Name}“ ein … 274.852 Einträge";
+    }
+
+    /// <summary>Zeigt statt der Tabelle die Erklärung der Arbeitsschritte (oder umgekehrt).</summary>
+    private void SetWorking(bool working)
+    {
+        WorkingPanel.Visibility = working ? Visibility.Visible : Visibility.Collapsed;
+        OperationsGrid.Visibility = working ? Visibility.Hidden : Visibility.Visible;
     }
 
     private ICollectionView CreateView(List<OperationRow> rows)
