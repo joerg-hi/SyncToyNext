@@ -35,6 +35,17 @@ public partial class PreviewWindow : Window
     private bool _hasRun;
     private bool _suppressSummary;
 
+    private bool _cancelRequested;
+    private bool _closeWhenStopped;
+    private bool _stoppingInBackground;
+    private bool _isClosed;
+
+    /// <summary>So lange wird nach „Abbrechen“ auf das Ende gewartet, bevor das Fenster trotzdem geschlossen werden darf.</summary>
+    private static readonly TimeSpan StopGracePeriod = TimeSpan.FromSeconds(5);
+
+    /// <summary>Ab dieser Größe wird für die laufende Datei ein eigener Fortschrittsbalken gezeigt.</summary>
+    private const long LargeFileBytes = 8L * 1024 * 1024;
+
     public PreviewWindow(IReadOnlyList<FolderPair> pairs, bool autoRun, SyncEngine engine, SyncLog log, Action<FolderPair> onPairRun)
     {
         InitializeComponent();
@@ -75,7 +86,11 @@ public partial class PreviewWindow : Window
 
         Loaded += async (_, _) => await StartAsync();
         Closing += OnClosing;
-        Closed += (_, _) => SetTaskbar(TaskbarItemProgressState.None, 0);
+        Closed += (_, _) =>
+        {
+            SetTaskbar(TaskbarItemProgressState.None, 0);
+            _isClosed = true;
+        };
     }
 
     private string Subject => _pairs.Count == 1 ? $"„{_pairs[0].Name}“" : $"{_pairs.Count} Ordnerpaare";
@@ -170,6 +185,12 @@ public partial class PreviewWindow : Window
 
         bool cancelled = token.IsCancellationRequested;
         SetBusy(false, cancelled ? "Vorschau abgebrochen." : "");
+        if (_closeWhenStopped)
+        {
+            Close();
+            return;
+        }
+
         SetTaskbar(TaskbarItemProgressState.None, 0);
         UpdateSummary();
         UpdateEmptyState();
@@ -237,6 +258,39 @@ public partial class PreviewWindow : Window
         Progress.IsIndeterminate = true;
         ProgressText.Text = $"Lese „{pair.Name}“ ein … 274.852 Einträge";
     }
+
+    /// <summary>
+    /// Für den Starttest: zeigt die Fortschrittsanzeige einer laufenden Übertragung mit typischen Werten,
+    /// damit das Layout auf einem Bildschirmfoto geprüft werden kann.
+    /// </summary>
+    internal void ShowTransferStateForScreenshot()
+    {
+        // Nur das Aussehen, ohne _busy zu setzen (sonst fragt das Schließen nach).
+        CancelButton.Visibility = Visibility.Visible;
+        CloseButton.IsEnabled = false;
+        Progress.Visibility = Visibility.Visible;
+        Progress.IsIndeterminate = false;
+        Progress.Value = 0.35;
+        SetTransferLayout(true);
+        RunButton.IsEnabled = false;
+        TransferText.Text = "Aktion 255 von 7.339 · 1,21 GB von 3,45 GB (35 %)";
+        TransferTimeText.Text = "24,6 MB/s · noch etwa 2 Min. · 0:51 vergangen";
+        CurrentFileText.Text = @"Thunderbird\Mail\pop.gmx.net\Inbox";
+        CurrentFileAmountText.Text = "820 MB von 1,75 GB (46 %)";
+        CurrentFileProgress.Value = 0.46;
+        CurrentFileProgress.Visibility = Visibility.Visible;
+        if (_rows.Count > 0) _rows[^1].RunningText = "Wird kopiert … 46 %";
+    }
+
+    /// <summary>Für den Starttest: wie Schließen mit „Ja, abbrechen“, aber ohne Rückfrage.</summary>
+    internal void CancelAndCloseForTest()
+    {
+        _closeWhenStopped = true;
+        Cancel_Click(this, new RoutedEventArgs());
+    }
+
+    /// <summary>Für den Starttest: läuft gerade eine Kopie mit eigenem Fortschrittsbalken?</summary>
+    internal bool IsCopyingLargeFile => _busy && _hasRun && CurrentFileProgress.Visibility == Visibility.Visible;
 
     /// <summary>Zeigt statt der Tabelle die Erklärung der Arbeitsschritte (oder umgekehrt).</summary>
     private void SetWorking(bool working)
@@ -405,27 +459,100 @@ public partial class PreviewWindow : Window
         bool cancelled = false;
         SetTaskbar(TaskbarItemProgressState.Normal, 0);
 
+        var rowByOperation = new Dictionary<SyncOperation, OperationRow>(ReferenceEqualityComparer.Instance);
+        foreach (var row in _rows) rowByOperation[row.Operation] = row;
+        var clock = Stopwatch.StartNew();
+        var estimator = new TransferEstimator();
+        OperationRow? activeRow = null;
+        long lastFollow = 0;
+        SetTransferLayout(true);
+
+        void ShowTransfer(FolderPair pair, SyncProgress p, long baseBytes, int baseOps)
+        {
+            if (!_busy) return; // verspätete Meldung nach dem Ende
+
+            if (p.SavingState)
+            {
+                if (activeRow is not null) activeRow.RunningText = null;
+                activeRow = null;
+                CurrentFileText.Text = (_pairs.Count > 1 ? pair.Name + ": " : "") + "Statusdateien werden gespeichert …";
+                CurrentFileAmountText.Text = "";
+                CurrentFileProgress.Visibility = Visibility.Hidden;
+                return;
+            }
+
+            long doneBytes = baseBytes + p.BytesCopied;
+            int doneOps = baseOps + p.CompletedOperations;
+            double value = totalBytes > 0
+                ? Math.Min(1.0, doneBytes / (double)totalBytes)
+                : totalOps > 0 ? Math.Min(1.0, doneOps / (double)totalOps) : 1.0;
+            Progress.Value = value;
+            SetTaskbar(TaskbarItemProgressState.Normal, value);
+
+            estimator.Add(clock.Elapsed, doneBytes, value);
+            int current = Math.Min(totalOps, doneOps + (p.CurrentOperation is null ? 0 : 1));
+            TransferText.Text = totalBytes > 0
+                ? $"Aktion {current:N0} von {totalOps:N0} · {SyncLog.FormatBytes(doneBytes)} von {SyncLog.FormatBytes(totalBytes)} ({value:P0})"
+                : $"Aktion {current:N0} von {totalOps:N0} ({value:P0})";
+
+            var times = new List<string>();
+            if (totalBytes > 0 && estimator.BytesPerSecond is { } speed) times.Add($"{SyncLog.FormatBytes((long)speed)}/s");
+            if (estimator.Remaining is { } remaining) times.Add($"noch {TransferEstimator.FormatRemaining(remaining)}");
+            times.Add($"{TransferEstimator.FormatDuration(clock.Elapsed)} vergangen");
+            if (!_cancelRequested) TransferTimeText.Text = string.Join(" · ", times);
+
+            var op = p.CurrentOperation;
+            var row = op is not null && rowByOperation.TryGetValue(op, out var r) ? r : null;
+            if (!ReferenceEquals(row, activeRow))
+            {
+                if (activeRow is not null) activeRow.RunningText = null;
+                activeRow = row;
+                long now = Environment.TickCount64;
+                if (row is not null && FollowCheckBox.IsChecked == true && now - lastFollow >= 250 && _view.Contains(row))
+                {
+                    lastFollow = now;
+                    OperationsGrid.ScrollIntoView(row);
+                }
+            }
+
+            if (op is null)
+            {
+                CurrentFileText.Text = "";
+                CurrentFileAmountText.Text = "";
+                CurrentFileProgress.Visibility = Visibility.Hidden;
+                return;
+            }
+
+            CurrentFileText.Text = (_pairs.Count > 1 ? pair.Name + ": " : "") + op.DisplayPath;
+            bool isCopy = op.Kind is OperationKind.Copy or OperationKind.Overwrite;
+            bool large = isCopy && op.Size >= LargeFileBytes;
+            if (large)
+            {
+                double fileValue = Math.Min(1.0, p.CurrentBytes / (double)op.Size);
+                CurrentFileProgress.Value = fileValue;
+                CurrentFileAmountText.Text = $"{SyncLog.FormatBytes(p.CurrentBytes)} von {SyncLog.FormatBytes(op.Size)} ({fileValue:P0})";
+                if (row is not null) row.RunningText = $"Wird kopiert … {fileValue:P0}";
+            }
+            else
+            {
+                CurrentFileAmountText.Text = isCopy ? SyncLog.FormatBytes(op.Size) : op.KindText;
+                if (row is not null) row.RunningText = isCopy ? "Wird kopiert …" : "Läuft …";
+            }
+
+            CurrentFileProgress.Visibility = large ? Visibility.Visible : Visibility.Hidden;
+        }
+
         foreach (var (pair, plan) in toRun)
         {
             if (token.IsCancellationRequested) { cancelled = true; break; }
 
             long baseBytes = bytesBefore;
             int baseOps = opsBefore;
-            var progress = new Progress<SyncProgress>(p =>
-            {
-                double value = totalBytes > 0
-                    ? Math.Min(1.0, (baseBytes + p.BytesCopied) / (double)totalBytes)
-                    : totalOps > 0 ? Math.Min(1.0, (baseOps + p.CompletedOperations) / (double)totalOps) : 1.0;
-                Progress.Value = value;
-                SetTaskbar(TaskbarItemProgressState.Normal, value);
-                ProgressText.Text = p.CurrentItem is null
-                    ? ""
-                    : $"{baseOps + p.CompletedOperations + 1} / {totalOps} · {(_pairs.Count > 1 ? pair.Name + ": " : "")}{p.CurrentItem}";
-            });
+            var progress = new Progress<SyncProgress>(p => ShowTransfer(pair, p, baseBytes, baseOps));
 
             try
             {
-                var result = await UiHelpers.RunSta(() => _engine.Run(plan, progress, token));
+                var result = await WaitForRunAsync(UiHelpers.RunSta(() => _engine.Run(plan, progress, token)), token);
                 _log.Write(result);
                 _onPairRun(pair);
                 foreach (string w in result.Warnings) _warnings.Add(Prefix(pair, w));
@@ -446,17 +573,48 @@ public partial class PreviewWindow : Window
             opsBefore += plan.Operations.Count(o => o.IsSelected);
         }
 
+        if (activeRow is not null) activeRow.RunningText = null;
+        _stoppingInBackground = false;
+        SetTransferLayout(false);
         SetBusy(false, "");
         Progress.Visibility = Visibility.Visible;
         if (!cancelled) Progress.Value = 1;
-        ShowResult(succeeded, failed, skipped, copied, cancelled);
+        ShowResult(succeeded, failed, skipped, copied, cancelled, clock.Elapsed);
         UpdateEmptyState();
+        if (_closeWhenStopped && !_isClosed) Close();
     }
 
-    private void ShowResult(int succeeded, int failed, int skipped, long copied, bool cancelled)
+    /// <summary>
+    /// Wartet auf das Ende der Ausführung. Nach „Abbrechen“ endet sie normalerweise sofort. Antwortet ein
+    /// Netzlaufwerk nicht, kann Windows die laufende Datei aber noch eine Weile festhalten; dann darf das
+    /// Fenster nach kurzer Zeit trotzdem geschlossen werden, und der Vorgang endet im Hintergrund.
+    /// </summary>
+    private async Task<SyncResult> WaitForRunAsync(Task<SyncResult> run, CancellationToken token)
+    {
+        try
+        {
+            return await run.WaitAsync(token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // Abgebrochen: das Ergebnis (bisher Erledigtes, Statusdateien) trotzdem abwarten.
+        }
+
+        if (await Task.WhenAny(run, Task.Delay(StopGracePeriod)) != run)
+        {
+            _stoppingInBackground = true;
+            CloseButton.IsEnabled = true;
+            TransferTimeText.Text = "Wird abgebrochen … Das Netzlaufwerk gibt die laufende Datei noch nicht frei. " +
+                                    "Sie können das Fenster schon schließen; der Vorgang endet dann im Hintergrund.";
+        }
+
+        return await run;
+    }
+
+    private void ShowResult(int succeeded, int failed, int skipped, long copied, bool cancelled, TimeSpan duration)
     {
         string details = $"{succeeded} erledigt, {failed} fehlgeschlagen, {skipped} übersprungen, " +
-                         $"{SyncLog.FormatBytes(copied)} kopiert.";
+                         $"{SyncLog.FormatBytes(copied)} kopiert in {TransferEstimator.FormatDuration(duration)}.";
 
         if (cancelled)
         {
@@ -488,6 +646,22 @@ public partial class PreviewWindow : Window
         CloseButton.Focus();
     }
 
+    /// <summary>
+    /// Während der Ausführung steht der Fortschritt über die volle Breite oberhalb der Schaltflächen,
+    /// damit Menge, Tempo, Restzeit und Dateiname auch bei schmalem Fenster lesbar bleiben.
+    /// </summary>
+    private void SetTransferLayout(bool transfer)
+    {
+        System.Windows.Controls.Grid.SetRow(ProgressArea, transfer ? 0 : 1);
+        System.Windows.Controls.Grid.SetColumnSpan(ProgressArea, transfer ? 2 : 1);
+        ProgressArea.Margin = transfer ? new Thickness(0, 0, 0, 12) : new Thickness(0, 0, 20, 0);
+        var visibility = transfer ? Visibility.Visible : Visibility.Collapsed;
+        TransferHeader.Visibility = visibility;
+        TransferFile.Visibility = visibility;
+        FollowCheckBox.Visibility = visibility;
+        ProgressText.Visibility = transfer ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private void SetBusy(bool busy, string text)
     {
         _busy = busy;
@@ -503,7 +677,7 @@ public partial class PreviewWindow : Window
 
     private void SetTaskbar(TaskbarItemProgressState state, double value)
     {
-        if (Owner?.TaskbarItemInfo is not { } info) return;
+        if (_isClosed || Owner?.TaskbarItemInfo is not { } info) return; // Fenster schon zu, Vorgang endete im Hintergrund
         info.ProgressState = state;
         info.ProgressValue = value;
     }
@@ -583,21 +757,27 @@ public partial class PreviewWindow : Window
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
+        _cancelRequested = _hasRun;
         _cts?.Cancel();
         CancelButton.IsEnabled = false;
         ProgressText.Text = "Wird abgebrochen …";
+        if (_hasRun) TransferTimeText.Text = "Wird abgebrochen … (die laufende Aktion wird beendet)";
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (!_busy) return;
-
-        var answer = MessageBox.Show(this, "Die Verarbeitung läuft noch. Soll sie abgebrochen werden?",
-            UiHelpers.AppName, MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (answer == MessageBoxResult.Yes) Cancel_Click(this, new RoutedEventArgs());
+        if (!_busy || _stoppingInBackground) return;
         e.Cancel = true;
+        if (_closeWhenStopped) return; // Abbruch läuft bereits, das Fenster schließt sich danach
+
+        var answer = MessageBox.Show(this,
+            "Die Verarbeitung läuft noch. Soll sie abgebrochen werden?\n\nDas Fenster schließt sich, sobald sie beendet ist.",
+            UiHelpers.AppName, MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes) return;
+        _closeWhenStopped = true;
+        Cancel_Click(this, new RoutedEventArgs());
     }
 
     private sealed record SummaryChip(string Glyph, string Text);

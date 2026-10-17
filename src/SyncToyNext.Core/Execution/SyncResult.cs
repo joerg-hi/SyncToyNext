@@ -31,9 +31,20 @@ public sealed class SyncResult
     public bool HasErrors => Failed > 0;
 }
 
+/// <summary>Fortschritt der Ausführung.</summary>
+/// <param name="CompletedOperations">Bereits abgearbeitete Aktionen (egal mit welchem Ergebnis).</param>
+/// <param name="BytesCopied">Abgearbeitete Bytes: fertig bearbeitete Kopien (auch übersprungene) plus der Teil der laufenden Datei.</param>
+/// <param name="TotalBytes">Summe der Größen aller zu kopierenden Dateien.</param>
+/// <param name="CurrentItem">Angezeigter Pfad der laufenden Aktion, <c>null</c> am Ende.</param>
+/// <param name="CurrentOperation">Die laufende Aktion, <c>null</c> am Ende.</param>
+/// <param name="CurrentBytes">Bereits kopierte Bytes der laufenden Datei.</param>
+/// <param name="SavingState">Die Aktionen sind beendet, die Statusdateien werden gespeichert (übrige Werte ohne Bedeutung).</param>
 public readonly record struct SyncProgress(
     int CompletedOperations,
     int TotalOperations,
     long BytesCopied,
     long TotalBytes,
-    string? CurrentItem);
+    string? CurrentItem,
+    SyncOperation? CurrentOperation = null,
+    long CurrentBytes = 0,
+    bool SavingState = false);
