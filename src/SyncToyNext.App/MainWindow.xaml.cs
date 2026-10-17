@@ -115,10 +115,13 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task CheckFoldersAsync(FolderPair pair)
     {
-        var (left, right) = await Task.Run(() => (Directory.Exists(pair.LeftPath), Directory.Exists(pair.RightPath)));
+        var leftTask = UiHelpers.DirectoryExistsAsync(pair.LeftPath, 15000);
+        var rightTask = UiHelpers.DirectoryExistsAsync(pair.RightPath, 15000);
+        bool? left = await leftTask;
+        bool? right = await rightTask;
         if (SelectedPair != pair) return;
-        LeftMissingPanel.Visibility = left ? Visibility.Collapsed : Visibility.Visible;
-        RightMissingPanel.Visibility = right ? Visibility.Collapsed : Visibility.Visible;
+        LeftMissingPanel.Visibility = left == true ? Visibility.Collapsed : Visibility.Visible;
+        RightMissingPanel.Visibility = right == true ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void PairList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => UpdateDetails();
@@ -138,12 +141,12 @@ public partial class MainWindow : Window
 
     private void OpenLeft_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedPair is { } pair) UiHelpers.OpenInExplorer(pair.LeftPath);
+        if (SelectedPair is { } pair) _ = UiHelpers.OpenInExplorerAsync(pair.LeftPath);
     }
 
     private void OpenRight_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedPair is { } pair) UiHelpers.OpenInExplorer(pair.RightPath);
+        if (SelectedPair is { } pair) _ = UiHelpers.OpenInExplorerAsync(pair.RightPath);
     }
 
     // ------------------------------------------------------------------ Ordnerpaare verwalten
@@ -211,11 +214,15 @@ public partial class MainWindow : Window
             UiHelpers.AppName, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
         if (answer != MessageBoxResult.Yes) return;
 
-        foreach (string root in new[] { pair.LeftPath, pair.RightPath })
+        // Statusdateien im Hintergrund entfernen; ein langsames Netzlaufwerk soll das Fenster nicht aufhalten.
+        _ = Task.Run(() =>
         {
-            try { SnapshotStore.Delete(root, pair.Id); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* Ordner ggf. nicht erreichbar */ }
-        }
+            foreach (string root in new[] { pair.LeftPath, pair.RightPath })
+            {
+                try { SnapshotStore.Delete(root, pair.Id); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* Ordner ggf. nicht erreichbar */ }
+            }
+        });
 
         int index = PairList.SelectedIndex;
         _items.RemoveAt(index);
@@ -228,13 +235,15 @@ public partial class MainWindow : Window
 
     private void Window_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = DroppedFolders(e).Count > 0 ? DragDropEffects.Link : DragDropEffects.None;
+        // Während des Ziehens kein Dateisystemzugriff (wird bei jeder Mausbewegung aufgerufen).
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Link : DragDropEffects.None;
         e.Handled = true;
     }
 
-    private void Window_Drop(object sender, DragEventArgs e)
+    private async void Window_Drop(object sender, DragEventArgs e)
     {
-        var folders = DroppedFolders(e);
+        var paths = UiHelpers.DroppedPaths(e);
+        var folders = await UiHelpers.ExistingFoldersAsync(paths, 2);
         if (folders.Count == 0) return;
 
         var template = new FolderPair
@@ -244,11 +253,6 @@ public partial class MainWindow : Window
         };
         CreatePair(template);
     }
-
-    private static List<string> DroppedFolders(DragEventArgs e) =>
-        e.Data.GetData(DataFormats.FileDrop) is string[] paths
-            ? paths.Where(Directory.Exists).Take(2).ToList()
-            : new List<string>();
 
     // ------------------------------------------------------------------ Vorschau / Ausführen
 
@@ -331,7 +335,7 @@ public partial class MainWindow : Window
     private void OpenDataFolder_Click(object sender, RoutedEventArgs e)
     {
         Directory.CreateDirectory(PairStore.DefaultDataDirectory);
-        UiHelpers.OpenInExplorer(PairStore.DefaultDataDirectory);
+        _ = UiHelpers.OpenInExplorerAsync(PairStore.DefaultDataDirectory);
     }
 
     private void Scheduler_Click(object sender, RoutedEventArgs e)

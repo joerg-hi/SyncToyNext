@@ -11,9 +11,8 @@ namespace SyncToyNext.Core.Execution;
 /// </summary>
 public sealed class SyncExecutor
 {
-    private const int CopyBufferSize = 1024 * 1024;
-
     private readonly IRecycleBin _recycleBin;
+    private readonly HashSet<string> _knownDirectories = new(StringComparer.OrdinalIgnoreCase);
 
     public SyncExecutor(IRecycleBin recycleBin) => _recycleBin = recycleBin;
 
@@ -23,6 +22,7 @@ public sealed class SyncExecutor
         IProgress<SyncProgress>? progress,
         CancellationToken cancellationToken)
     {
+        _knownDirectories.Clear();
         var selected = plan.Operations.Where(o => o.IsSelected).ToList();
         foreach (var op in plan.Operations.Where(o => !o.IsSelected))
         {
@@ -121,24 +121,29 @@ public sealed class SyncExecutor
             case OperationKind.Copy:
             case OperationKind.Overwrite:
             {
-                string source = PathUtil.ToFullPath(sourceRoot, op.SourcePath!);
-                if (!Unchanged(source, op.SourceEntry)) { Skip(op, "Quelldatei wurde seit der Vorschau verändert"); return; }
+                // Je eine Abfrage für Quelle und Ziel liefert alles Nötige (Existenz, Größe, Datum, Attribute).
+                var sourceInfo = new FileInfo(PathUtil.ToFullPath(sourceRoot, op.SourcePath!));
+                if (!Matches(sourceInfo, op.SourceEntry)) { Skip(op, "Quelldatei wurde seit der Vorschau verändert"); return; }
 
-                if (op.Kind == OperationKind.Copy && (File.Exists(target) || Directory.Exists(target)))
+                var targetInfo = new FileInfo(target);
+                if (op.Kind == OperationKind.Copy && targetInfo.Exists)
                 {
                     Skip(op, "Zieldatei ist inzwischen vorhanden");
                     return;
                 }
 
-                if (op.Kind == OperationKind.Overwrite && !Unchanged(target, op.TargetEntry))
+                if (op.Kind == OperationKind.Overwrite && !Matches(targetInfo, op.TargetEntry))
                 {
                     Skip(op, "Zieldatei wurde seit der Vorschau verändert");
                     return;
                 }
 
                 long before = result.BytesCopied;
-                CopyFile(source, target, recycle, copied => reportBytes(before + copied), ct);
+                CopyFile(sourceInfo, targetInfo, recycle, copied => reportBytes(before + copied), ct);
                 result.BytesCopied = before + op.Size;
+
+                var written = new FileInfo(target);
+                op.ResultEntry = new FileEntry(op.TargetPath, false, written.Length, written.LastWriteTimeUtc, written.Attributes);
                 Succeed(op);
                 break;
             }
@@ -160,58 +165,45 @@ public sealed class SyncExecutor
     /// Kopiert über eine temporäre Datei im Zielordner, damit bei einem Abbruch nie eine halbe Datei
     /// unter dem echten Namen liegt. Zeitstempel und Attribute werden übernommen.
     /// </summary>
-    private void CopyFile(string source, string target, bool recycle, Action<long> reportBytes, CancellationToken ct)
+    private void CopyFile(FileInfo source, FileInfo target, bool recycle, Action<long> reportBytes, CancellationToken ct)
     {
-        string directory = Path.GetDirectoryName(target)!;
-        Directory.CreateDirectory(directory);
+        string directory = target.DirectoryName!;
+        EnsureDirectory(directory);
         string temp = Path.Combine(directory,
-            $"{Path.GetFileName(target)}.{Guid.NewGuid().ToString("N")[..8]}{FileFilter.TempFileSuffix}");
+            $"{target.Name}.{Guid.NewGuid().ToString("N")[..8]}{FileFilter.TempFileSuffix}");
 
-        var sourceInfo = new FileInfo(source);
         try
         {
-            using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBufferSize, FileOptions.SequentialScan))
-            using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBufferSize))
+            FileCopier.Copy(source.FullName, temp, source.Length, reportBytes, ct);
+
+            if (target.Exists)
             {
-                var buffer = new byte[CopyBufferSize];
-                long copied = 0;
-                int read;
-                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                if ((target.Attributes & FileAttributes.ReadOnly) != 0)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    output.Write(buffer, 0, read);
-                    copied += read;
-                    reportBytes(copied);
+                    File.SetAttributes(target.FullName, target.Attributes & ~FileAttributes.ReadOnly);
                 }
+
+                if (recycle) _recycleBin.MoveToRecycleBin(target.FullName);
             }
 
-            File.SetLastWriteTimeUtc(temp, sourceInfo.LastWriteTimeUtc);
-            if (OperatingSystem.IsWindows())
-            {
-                File.SetCreationTimeUtc(temp, sourceInfo.CreationTimeUtc);
-            }
-
-            if (File.Exists(target))
-            {
-                ClearReadOnly(target);
-                if (recycle) _recycleBin.MoveToRecycleBin(target);
-            }
-
-            File.Move(temp, target, overwrite: true);
+            File.Move(temp, target.FullName, overwrite: true);
         }
         catch
         {
             TryDelete(temp);
             throw;
         }
+    }
 
-        const FileAttributes copiedAttributes = FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System | FileAttributes.Archive;
-        var attributes = sourceInfo.Attributes & copiedAttributes;
-        if (attributes != 0)
-        {
-            try { File.SetAttributes(target, attributes); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* Attribute sind nicht kritisch */ }
-        }
+    /// <summary>
+    /// Legt einen Ordner an. Bereits angelegte oder vorhandene Ordner werden gemerkt, damit beim Kopieren
+    /// vieler Dateien in denselben Ordner nicht jedes Mal nachgefragt wird (spart Netzwerkzugriffe).
+    /// </summary>
+    private void EnsureDirectory(string directory)
+    {
+        if (_knownDirectories.Contains(directory)) return;
+        Directory.CreateDirectory(directory);
+        _knownDirectories.Add(directory);
     }
 
     /// <summary>
@@ -249,12 +241,10 @@ public sealed class SyncExecutor
     }
 
     /// <summary>Prüft, ob die Datei noch dem bei der Planung gesehenen Stand entspricht.</summary>
-    private static bool Unchanged(string fullPath, FileEntry? expected)
-    {
-        if (expected is null) return false;
-        var info = new FileInfo(fullPath);
-        return info.Exists && info.Length == expected.Size && info.LastWriteTimeUtc == expected.LastWriteTimeUtc;
-    }
+    private static bool Unchanged(string fullPath, FileEntry? expected) => Matches(new FileInfo(fullPath), expected);
+
+    private static bool Matches(FileInfo info, FileEntry? expected) =>
+        expected is not null && info.Exists && info.Length == expected.Size && info.LastWriteTimeUtc == expected.LastWriteTimeUtc;
 
     private static void ClearReadOnly(string path)
     {

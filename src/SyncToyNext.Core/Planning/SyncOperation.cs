@@ -72,6 +72,12 @@ public sealed class SyncOperation : INotifyPropertyChanged
     /// <summary>Stand der Zieldatei bei der Planung, falls sie überschrieben, gelöscht oder umbenannt wird.</summary>
     public FileEntry? TargetEntry { get; init; }
 
+    /// <summary>
+    /// Tatsächlicher Stand der Zieldatei nach erfolgreichem Kopieren (zurückgelesen, weil manche
+    /// Datenträger Zeitstempel runden). Wird zum Fortschreiben der Statusdatei verwendet.
+    /// </summary>
+    public FileEntry? ResultEntry { get; internal set; }
+
     /// <summary>Kurze Begründung für die Vorschau.</summary>
     public string Reason { get; init; } = "";
 

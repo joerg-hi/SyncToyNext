@@ -61,12 +61,49 @@ internal static class UiHelpers
         return name.Length > 0 ? name : path.Trim();
     }
 
-    public static void OpenInExplorer(string path)
+    /// <summary>
+    /// Prüft im Hintergrund, ob ein Ordner existiert, damit ein langsames oder getrenntes Netzlaufwerk
+    /// die Oberfläche nicht einfriert. Liefert <c>null</c>, wenn innerhalb des Zeitlimits keine Antwort kam.
+    /// </summary>
+    public static async Task<bool?> DirectoryExistsAsync(string path, int timeoutMs = 5000)
     {
-        if (!Directory.Exists(path))
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        try
         {
-            MessageBox.Show($"Der Ordner \"{path}\" existiert nicht oder ist nicht erreichbar.", AppName,
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return await Task.Run(() => Directory.Exists(path)).WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Ordner, die aus dem Explorer gezogen werden (nur die Pfade, ohne Dateisystemzugriff).</summary>
+    public static string[] DroppedPaths(DragEventArgs e) =>
+        e.Data.GetData(DataFormats.FileDrop) as string[] ?? Array.Empty<string>();
+
+    /// <summary>Behält von den gezogenen Pfaden die vorhandenen Ordner (Prüfung im Hintergrund).</summary>
+    public static async Task<List<string>> ExistingFoldersAsync(IEnumerable<string> paths, int max)
+    {
+        var result = new List<string>();
+        foreach (string path in paths)
+        {
+            if (result.Count >= max) break;
+            if (await DirectoryExistsAsync(path) == true) result.Add(path);
+        }
+
+        return result;
+    }
+
+    public static async Task OpenInExplorerAsync(string path)
+    {
+        bool? exists = await DirectoryExistsAsync(path);
+        if (exists != true)
+        {
+            MessageBox.Show(exists is null
+                    ? $"Der Ordner \"{path}\" antwortet nicht. Ist das Netzlaufwerk verbunden?"
+                    : $"Der Ordner \"{path}\" existiert nicht oder ist nicht erreichbar.",
+                AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 

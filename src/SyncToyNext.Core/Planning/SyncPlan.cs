@@ -13,19 +13,19 @@ public sealed class SyncPlan
         List<SyncOperation> operations,
         List<string> warnings,
         string? confirmationRequired,
+        IReadOnlyDictionary<string, FileEntry> leftState,
+        IReadOnlyDictionary<string, FileEntry> rightState,
         IReadOnlyDictionary<string, FileEntry>? leftSnapshot,
-        IReadOnlyDictionary<string, FileEntry>? rightSnapshot,
-        int leftCount,
-        int rightCount)
+        IReadOnlyDictionary<string, FileEntry>? rightSnapshot)
     {
         Pair = pair;
         Operations = operations;
         Warnings = warnings;
         ConfirmationRequired = confirmationRequired;
+        LeftState = leftState;
+        RightState = rightState;
         LeftSnapshot = leftSnapshot;
         RightSnapshot = rightSnapshot;
-        LeftEntryCount = leftCount;
-        RightEntryCount = rightCount;
         CreatedUtc = DateTime.UtcNow;
     }
 
@@ -45,11 +45,17 @@ public sealed class SyncPlan
 
     public bool IsFirstRun => LeftSnapshot is null && RightSnapshot is null;
 
-    public int LeftEntryCount { get; }
+    public int LeftEntryCount => LeftState.Count;
 
-    public int RightEntryCount { get; }
+    public int RightEntryCount => RightState.Count;
 
     public DateTime CreatedUtc { get; }
+
+    /// <summary>Eingelesener Stand der linken Seite zum Zeitpunkt der Vorschau.</summary>
+    internal IReadOnlyDictionary<string, FileEntry> LeftState { get; }
+
+    /// <summary>Eingelesener Stand der rechten Seite zum Zeitpunkt der Vorschau.</summary>
+    internal IReadOnlyDictionary<string, FileEntry> RightState { get; }
 
     internal IReadOnlyDictionary<string, FileEntry>? LeftSnapshot { get; }
 

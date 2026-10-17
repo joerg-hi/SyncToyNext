@@ -68,10 +68,10 @@ public partial class FolderPairWindow : Window
 
     private void BrowseRight_Click(object sender, RoutedEventArgs e) => Browse(RightBox, "Rechten Ordner auswählen");
 
-    private void Browse(TextBox target, string title)
+    private async void Browse(TextBox target, string title)
     {
         var dialog = new OpenFolderDialog { Title = title };
-        if (Directory.Exists(target.Text)) dialog.InitialDirectory = target.Text;
+        if (await UiHelpers.DirectoryExistsAsync(target.Text, 2000) == true) dialog.InitialDirectory = target.Text;
         if (dialog.ShowDialog(this) == true)
         {
             target.Text = dialog.FolderName;
@@ -81,23 +81,22 @@ public partial class FolderPairWindow : Window
 
     private void PathBox_PreviewDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = DroppedFolder(e) is not null ? DragDropEffects.Link : DragDropEffects.None;
+        // Während des Ziehens kein Dateisystemzugriff (wird bei jeder Mausbewegung aufgerufen).
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Link : DragDropEffects.None;
         e.Handled = true;
     }
 
-    private void PathBox_PreviewDrop(object sender, DragEventArgs e)
+    private async void PathBox_PreviewDrop(object sender, DragEventArgs e)
     {
-        if (DroppedFolder(e) is { } folder && sender is TextBox box)
-        {
-            box.Text = folder;
-            SuggestName();
-        }
-
         e.Handled = true;
-    }
+        var paths = UiHelpers.DroppedPaths(e);
+        if (sender is not TextBox box) return;
 
-    private static string? DroppedFolder(DragEventArgs e) =>
-        e.Data.GetData(DataFormats.FileDrop) is string[] paths ? paths.FirstOrDefault(Directory.Exists) : null;
+        var folders = await UiHelpers.ExistingFoldersAsync(paths, 1);
+        if (folders.Count == 0) return;
+        box.Text = folders[0];
+        SuggestName();
+    }
 
     /// <summary>Schlägt einen Namen vor, solange noch keiner eingegeben ist.</summary>
     private void SuggestName()
@@ -110,20 +109,22 @@ public partial class FolderPairWindow : Window
 
     // ------------------------------------------------------------------ Unterordner
 
-    private void AddSubfolder_Click(object sender, RoutedEventArgs e)
+    private async void AddSubfolder_Click(object sender, RoutedEventArgs e)
     {
         string left = LeftBox.Text.Trim();
         string right = RightBox.Text.Trim();
-        if (!Directory.Exists(left) && !Directory.Exists(right))
+        bool leftExists = await UiHelpers.DirectoryExistsAsync(left) == true;
+        bool rightExists = !leftExists && await UiHelpers.DirectoryExistsAsync(right) == true;
+        if (!leftExists && !rightExists)
         {
-            ShowError("Bitte zuerst einen vorhandenen linken oder rechten Ordner angeben.");
+            ShowError("Bitte zuerst einen vorhandenen, erreichbaren linken oder rechten Ordner angeben.");
             return;
         }
 
         var dialog = new OpenFolderDialog
         {
             Title = "Auszuschließende Unterordner auswählen",
-            InitialDirectory = Directory.Exists(left) ? left : right,
+            InitialDirectory = leftExists ? left : right,
             Multiselect = true,
         };
         if (dialog.ShowDialog(this) != true) return;
@@ -169,7 +170,7 @@ public partial class FolderPairWindow : Window
         ErrorBar.Visibility = Visibility.Visible;
     }
 
-    private void Ok_Click(object sender, RoutedEventArgs e)
+    private async void Ok_Click(object sender, RoutedEventArgs e)
     {
         ErrorBar.Visibility = Visibility.Collapsed;
 
@@ -209,25 +210,45 @@ public partial class FolderPairWindow : Window
             return;
         }
 
-        foreach (string path in new[] { pair.LeftPath, pair.RightPath })
+        // Ordner im Hintergrund prüfen bzw. anlegen, damit ein langsames Netzlaufwerk das Fenster nicht einfriert.
+        OkButton.IsEnabled = false;
+        Cursor = System.Windows.Input.Cursors.AppStarting;
+        try
         {
-            if (Directory.Exists(path)) continue;
-
-            var create = MessageBox.Show(this,
-                $"Der Ordner \"{path}\" existiert nicht.\n\nSoll er angelegt werden?",
-                Title, MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (create != MessageBoxResult.Yes) return;
-
-            try
+            foreach (string path in new[] { pair.LeftPath, pair.RightPath })
             {
-                Directory.CreateDirectory(path);
-            }
-            catch (Exception ex)
-            {
-                ShowError($"Der Ordner konnte nicht angelegt werden: {ex.Message}");
-                return;
+                bool? exists = await UiHelpers.DirectoryExistsAsync(path, 15000);
+                if (exists == true) continue;
+                if (exists is null)
+                {
+                    ShowError($"Der Ordner \"{path}\" antwortet nicht. Ist das Netzlaufwerk verbunden?");
+                    return;
+                }
+
+                var create = MessageBox.Show(this,
+                    $"Der Ordner \"{path}\" existiert nicht.\n\nSoll er angelegt werden?",
+                    Title, MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (create != MessageBoxResult.Yes) return;
+
+                try
+                {
+                    await Task.Run(() => Directory.CreateDirectory(path));
+                }
+                catch (Exception ex)
+                {
+                    ShowError($"Der Ordner konnte nicht angelegt werden: {ex.Message}");
+                    return;
+                }
             }
         }
+        finally
+        {
+            OkButton.IsEnabled = true;
+            Cursor = null;
+        }
+
+        // Der Dialog kann während der Prüfung über „Abbrechen“ geschlossen worden sein.
+        if (!IsVisible) return;
 
         if (_original is null)
         {

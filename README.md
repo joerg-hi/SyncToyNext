@@ -166,6 +166,24 @@ bitte nicht löschen. Ohne sie verhält sich das nächste Ausführen wie ein ers
 
 Die Ordnerpaare stehen in `%LOCALAPPDATA%\SyncToyNext\FolderPairs.json`.
 
+### Netzlaufwerke (NAS, Freigaben)
+
+Bei Netzlaufwerken bremst vor allem die Wartezeit pro Anfrage, nicht die Datenmenge. SyncToyNext ist
+darauf ausgelegt:
+
+- Beim Einlesen werden mehrere Ordner gleichzeitig abgefragt, beide Seiten parallel, mit großen
+  Puffern. Größe, Datum und Attribute kommen direkt aus dem Verzeichnis-Listing, ohne Abfrage je Datei.
+  Die Vorschau zeigt laufend, wie viele Einträge schon gelesen sind.
+- Nach dem Ausführen werden die Ordner nicht erneut eingelesen. Der neue Stand ergibt sich aus der
+  Vorschau und den erfolgreich ausgeführten Aktionen.
+- Kopiert wird mit derselben Windows-Funktion wie im Explorer (`CopyFileEx`). Pro Datei sind nur
+  wenige zusätzliche Abfragen nötig, und bereits angelegte Zielordner werden gemerkt.
+- Die Oberfläche greift nie direkt auf Netzwerkpfade zu. Antwortet ein Laufwerk nicht, erscheint ein
+  Hinweis, statt dass das Fenster einfriert.
+
+Die Option **„Dateiinhalte prüfen“** liest Dateien, die auf beiden Seiten vorkommen, vollständig über
+das Netzwerk. Bei großen Datenmengen auf einem NAS sollte sie deshalb nur bei Bedarf aktiv sein.
+
 ---
 
 ## Bekannte Einschränkungen

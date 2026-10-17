@@ -90,7 +90,9 @@ public partial class PreviewWindow : Window
             ProgressText.Text = $"Lese „{pair.Name}“ ein …";
             try
             {
-                var plan = await Task.Run(() => _engine.Preview(pair, token), token);
+                string name = pair.Name;
+                var progress = new Progress<int>(n => ProgressText.Text = $"Lese „{name}“ ein … {n:N0} Einträge");
+                var plan = await Task.Run(() => _engine.Preview(pair, token, progress), token);
                 _plans.Add((pair, plan));
                 foreach (var op in plan.Operations)
                 {
@@ -422,20 +424,28 @@ public partial class PreviewWindow : Window
     }
 
     /// <summary>Zeigt die Datei im Explorer an; existiert sie nicht (mehr), den nächsten vorhandenen Ordner.</summary>
-    private void ShowInExplorer(Side side)
+    private async void ShowInExplorer(Side side)
     {
         if (SelectedRow is not { } row) return;
         string path = row.FullPath(side);
 
-        if (File.Exists(path) || Directory.Exists(path))
+        // Im Hintergrund suchen, damit ein langsames Netzlaufwerk das Fenster nicht einfriert.
+        var (exists, folder) = await Task.Run(() =>
+        {
+            if (File.Exists(path) || Directory.Exists(path)) return (true, (string?)null);
+            string? parent = Path.GetDirectoryName(path);
+            while (parent is not null && !Directory.Exists(parent)) parent = Path.GetDirectoryName(parent);
+            return (false, parent);
+        });
+
+        if (exists)
         {
             Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
-            return;
         }
-
-        string? folder = Path.GetDirectoryName(path);
-        while (folder is not null && !Directory.Exists(folder)) folder = Path.GetDirectoryName(folder);
-        if (folder is not null) UiHelpers.OpenInExplorer(folder);
+        else if (folder is not null)
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+        }
     }
 
     private void CopyPath_Click(object sender, RoutedEventArgs e)

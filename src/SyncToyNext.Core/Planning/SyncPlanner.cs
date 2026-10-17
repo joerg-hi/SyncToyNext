@@ -112,7 +112,7 @@ public static class SyncPlanner
                 .ThenBy(o => o.TargetPath, StringComparer.OrdinalIgnoreCase));
 
             return new SyncPlan(_pair, operations, _warnings, CheckMassDeletion(operations),
-                _origLeftSnap, _origRightSnap, _origLeft.Count, _origRight.Count);
+                _origLeft, _origRight, _origLeftSnap, _origRightSnap);
         }
 
         // ------------------------------------------------------------------ Ordner-Umbenennungen
@@ -220,21 +220,9 @@ public static class SyncPlanner
                 Reason = side == Side.Left ? "Ordner links umbenannt" : "Ordner rechts umbenannt",
             });
 
-            MoveTree(targetFiles, from, to);
-            MoveTree(Snap(target), from, to);
-            MoveTree(Snap(side), from, to);
-        }
-
-        private static void MoveTree(Dictionary<string, FileEntry> dict, string from, string to)
-        {
-            var keys = dict.Keys.Where(k => PathUtil.IsSameOrBelow(k, from)).ToList();
-            var moved = keys.Select(k => dict[k]).ToList();
-            foreach (string key in keys) dict.Remove(key);
-            foreach (var entry in moved)
-            {
-                string newPath = to + entry.RelativePath[from.Length..];
-                dict[newPath] = entry.WithPath(newPath);
-            }
+            EntryTree.MoveTree(targetFiles, from, to);
+            EntryTree.MoveTree(Snap(target), from, to);
+            EntryTree.MoveTree(Snap(side), from, to);
         }
 
         // ------------------------------------------------------------------ Schreibweise

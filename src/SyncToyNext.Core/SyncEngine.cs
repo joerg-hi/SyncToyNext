@@ -54,26 +54,60 @@ public sealed class SyncEngine
     /// <summary>
     /// Liest beide Ordner ein und berechnet, was bei der Ausführung passieren würde. Ändert nichts.
     /// </summary>
-    public SyncPlan Preview(FolderPair pair, CancellationToken cancellationToken = default)
+    /// <param name="progress">Meldet die Anzahl der bisher eingelesenen Einträge beider Seiten.</param>
+    public SyncPlan Preview(FolderPair pair, CancellationToken cancellationToken = default, IProgress<int>? progress = null)
     {
         string? error = Validate(pair);
         if (error is not null) throw new InvalidOperationException(error);
 
-        var warnings = new List<string>();
         var filter = new FileFilter(pair.Options);
-        var left = FolderScanner.Scan(pair.LeftPath, filter, warnings, cancellationToken);
-        var right = FolderScanner.Scan(pair.RightPath, filter, warnings, cancellationToken);
-        var leftSnapshot = SnapshotStore.Load(pair.LeftPath, pair.Id);
-        var rightSnapshot = SnapshotStore.Load(pair.RightPath, pair.Id);
+        var leftWarnings = new List<string>();
+        var rightWarnings = new List<string>();
+        int leftCount = 0, rightCount = 0;
+        void Report() => progress?.Report(Volatile.Read(ref leftCount) + Volatile.Read(ref rightCount));
 
-        var plan = SyncPlanner.CreatePlan(pair, left, right, leftSnapshot, rightSnapshot,
+        // Beide Seiten gleichzeitig einlesen; schlägt eine fehl, wird die andere abgebrochen.
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var leftTask = Task.Run(() => ScanSide(pair.LeftPath, filter, leftWarnings, cts, n => { Volatile.Write(ref leftCount, n); Report(); }));
+        var rightTask = Task.Run(() => ScanSide(pair.RightPath, filter, rightWarnings, cts, n => { Volatile.Write(ref rightCount, n); Report(); }));
+        var leftSnapshotTask = Task.Run(() => SnapshotStore.Load(pair.LeftPath, pair.Id));
+        var rightSnapshotTask = Task.Run(() => SnapshotStore.Load(pair.RightPath, pair.Id));
+
+        try
+        {
+            Task.WaitAll(leftTask, rightTask, leftSnapshotTask, rightSnapshotTask);
+        }
+        catch (AggregateException ex)
+        {
+            // Den eigentlichen Fehler weitergeben, nicht den Folge-Abbruch der anderen Seite.
+            var first = ex.Flatten().InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException)
+                        ?? ex.Flatten().InnerExceptions[0];
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var warnings = leftWarnings.Concat(rightWarnings).ToList();
+
+        return SyncPlanner.CreatePlan(pair, leftTask.Result, rightTask.Result, leftSnapshotTask.Result, rightSnapshotTask.Result,
             (l, r) => ContentComparer.AreEqual(
                 PathUtil.ToFullPath(pair.LeftPath, l.RelativePath),
                 PathUtil.ToFullPath(pair.RightPath, r.RelativePath),
                 cancellationToken),
             warnings);
+    }
 
-        return plan;
+    private static Dictionary<string, FileEntry> ScanSide(
+        string root, FileFilter filter, List<string> warnings, CancellationTokenSource cts, Action<int> progress)
+    {
+        try
+        {
+            return FolderScanner.Scan(root, filter, warnings, cts.Token, progress);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            cts.Cancel();
+            throw;
+        }
     }
 
     /// <summary>
@@ -93,24 +127,22 @@ public sealed class SyncEngine
         Run(Preview(pair, cancellationToken), progress, cancellationToken);
 
     /// <summary>
-    /// Neuer Stand je Seite = tatsächlicher Inhalt nach der Ausführung. Für Pfade, deren Aktion nicht
-    /// erfolgreich war (Fehler, abgewählt, abgebrochen), bleibt der alte Stand erhalten. So gilt die
-    /// Änderung beim nächsten Lauf weiterhin als offen und wird erneut angeboten.
+    /// Neuer Stand je Seite = eingelesener Stand aus der Vorschau plus die Wirkung der erfolgreichen Aktionen.
+    /// Die Ordner werden dafür nicht erneut eingelesen (auf Netzlaufwerken würde das die Laufzeit verdoppeln).
+    /// Für Pfade, deren Aktion nicht erfolgreich war (Fehler, abgewählt, abgebrochen), bleibt der alte Stand
+    /// erhalten. So gilt die Änderung beim nächsten Lauf weiterhin als offen und wird erneut angeboten.
+    /// Änderungen, die jemand während des Laufs außerhalb der Aktionen macht, werden so ebenfalls erst beim
+    /// nächsten Lauf als Änderung erkannt und nicht stillschweigend als „abgeglichen“ vermerkt.
     /// </summary>
     private static void UpdateSnapshots(SyncPlan plan, SyncResult result)
     {
         var pair = plan.Pair;
-        var filter = new FileFilter(pair.Options);
-        Dictionary<string, FileEntry> left, right;
-        try
+        var left = new Dictionary<string, FileEntry>(plan.LeftState, PathUtil.Comparer);
+        var right = new Dictionary<string, FileEntry>(plan.RightState, PathUtil.Comparer);
+
+        foreach (var op in plan.Operations.Where(o => o.Status == OperationStatus.Succeeded))
         {
-            left = FolderScanner.Scan(pair.LeftPath, filter);
-            right = FolderScanner.Scan(pair.RightPath, filter);
-        }
-        catch (Exception ex)
-        {
-            result.Warnings.Add($"Der Stand konnte nach der Ausführung nicht eingelesen werden: {ex.Message}");
-            return;
+            Apply(op.TargetSide == Side.Left ? left : right, op);
         }
 
         foreach (var op in plan.Operations.Where(o => o.Status != OperationStatus.Succeeded))
@@ -133,6 +165,42 @@ public sealed class SyncEngine
 
         Save(pair.LeftPath, pair.Id, left.Values, result);
         Save(pair.RightPath, pair.Id, right.Values, result);
+    }
+
+    /// <summary>Überträgt die Wirkung einer erfolgreichen Aktion auf den Stand der Zielseite.</summary>
+    private static void Apply(Dictionary<string, FileEntry> state, SyncOperation op)
+    {
+        switch (op.Kind)
+        {
+            case OperationKind.CreateFolder:
+                state[op.TargetPath] = new FileEntry(op.TargetPath, true, 0, default, FileAttributes.Directory);
+                EntryTree.EnsureAncestors(state, op.TargetPath);
+                break;
+
+            case OperationKind.Rename:
+            {
+                var entry = state.Remove(op.SourcePath!, out var old) ? old : op.TargetEntry;
+                if (entry is not null) state[op.TargetPath] = entry.WithPath(op.TargetPath);
+                EntryTree.EnsureAncestors(state, op.TargetPath);
+                break;
+            }
+
+            case OperationKind.RenameFolder:
+                EntryTree.MoveTree(state, op.SourcePath!, op.TargetPath);
+                EntryTree.EnsureAncestors(state, op.TargetPath);
+                break;
+
+            case OperationKind.Copy:
+            case OperationKind.Overwrite:
+                state[op.TargetPath] = op.ResultEntry ?? op.SourceEntry!.WithPath(op.TargetPath);
+                EntryTree.EnsureAncestors(state, op.TargetPath);
+                break;
+
+            case OperationKind.Delete:
+            case OperationKind.DeleteFolder:
+                state.Remove(op.TargetPath);
+                break;
+        }
     }
 
     private static void Revert(Dictionary<string, FileEntry> state, IReadOnlyDictionary<string, FileEntry>? oldSnapshot, string path)
