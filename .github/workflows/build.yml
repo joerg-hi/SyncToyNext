@@ -1,0 +1,62 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test
+        run: dotnet test SyncToyNext.sln -c Release
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          foreach ($project in 'src/SyncToyNext.App', 'src/SyncToyNext.Cmd') {
+            dotnet publish $project -c Release -r win-x64 --self-contained true `
+              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+              -p:EnableCompressionInSingleFile=true -p:DebugType=none `
+              -o out/SyncToyNext-win-x64
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            dotnet publish $project -c Release -r win-x64 --self-contained false `
+              -p:PublishSingleFile=true -p:DebugType=none `
+              -o out/SyncToyNext-win-x64-framework
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Copy-Item README.md, LICENSE out/SyncToyNext-win-x64
+          Copy-Item README.md, LICENSE out/SyncToyNext-win-x64-framework
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SyncToyNext-win-x64
+          path: out/SyncToyNext-win-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SyncToyNext-win-x64-framework
+          path: out/SyncToyNext-win-x64-framework
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path out/SyncToyNext-win-x64/* -DestinationPath out/SyncToyNext-win-x64.zip
+          Compress-Archive -Path out/SyncToyNext-win-x64-framework/* -DestinationPath out/SyncToyNext-win-x64-framework.zip
+          gh release create "${{ github.ref_name }}" out/SyncToyNext-win-x64.zip out/SyncToyNext-win-x64-framework.zip --generate-notes

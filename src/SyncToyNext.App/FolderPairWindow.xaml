@@ -1,0 +1,89 @@
+<Window x:Class="SyncToyNext.App.FolderPairWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ordnerpaar"
+        Width="640" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="18,8,18,14">
+        <TextBlock Text="Name des Ordnerpaars:" Style="{StaticResource FieldLabel}" />
+        <TextBox x:Name="NameBox" Padding="3" />
+
+        <TextBlock Text="Linker Ordner:" Style="{StaticResource FieldLabel}" />
+        <DockPanel>
+            <Button DockPanel.Dock="Right" Content="Durchsuchen …" Margin="6,0,0,0" Click="BrowseLeft_Click" />
+            <TextBox x:Name="LeftBox" Padding="3" VerticalContentAlignment="Center" />
+        </DockPanel>
+
+        <TextBlock Text="Rechter Ordner:" Style="{StaticResource FieldLabel}" />
+        <DockPanel>
+            <Button DockPanel.Dock="Right" Content="Durchsuchen …" Margin="6,0,0,0" Click="BrowseRight_Click" />
+            <TextBox x:Name="RightBox" Padding="3" VerticalContentAlignment="Center" />
+        </DockPanel>
+
+        <GroupBox Header="Was soll passieren?" Margin="0,14,0,0" Padding="8,6">
+            <StackPanel>
+                <RadioButton x:Name="SynchronizeRadio" GroupName="Action" Margin="0,2,0,8">
+                    <StackPanel>
+                        <TextBlock Text="Synchronize" FontWeight="SemiBold" />
+                        <TextBlock x:Name="SynchronizeText" Style="{StaticResource Hint}" />
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="EchoRadio" GroupName="Action" Margin="0,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="Echo" FontWeight="SemiBold" />
+                        <TextBlock x:Name="EchoText" Style="{StaticResource Hint}" />
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="ContributeRadio" GroupName="Action" Margin="0,0,0,2">
+                    <StackPanel>
+                        <TextBlock Text="Contribute" FontWeight="SemiBold" />
+                        <TextBlock x:Name="ContributeText" Style="{StaticResource Hint}" />
+                    </StackPanel>
+                </RadioButton>
+            </StackPanel>
+        </GroupBox>
+
+        <Expander x:Name="OptionsExpander" Header="Optionen" Margin="0,12,0,0">
+            <StackPanel Margin="4,4,0,0">
+                <TextBlock Text="Einzuschließende Dateien:" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="IncludeBox" Padding="3" />
+                <TextBlock Text="Platzhalter * und ?, mehrere Muster mit ; oder , trennen. Beispiel: *.docx; *.xlsx"
+                           Style="{StaticResource Hint}" />
+
+                <TextBlock Text="Auszuschließende Dateien:" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="ExcludeBox" Padding="3" />
+                <TextBlock Text="Beispiel: *.tmp; ~$*; Thumbs.db" Style="{StaticResource Hint}" />
+
+                <TextBlock Text="Ausgeschlossene Unterordner:" Style="{StaticResource FieldLabel}" />
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Margin="6,0,0,0">
+                        <Button Content="Hinzufügen …" Margin="0,0,0,4" Click="AddSubfolder_Click" />
+                        <Button Content="Entfernen" Margin="0" Click="RemoveSubfolder_Click" />
+                    </StackPanel>
+                    <ListBox x:Name="SubfolderList" Height="76" SelectionMode="Extended" />
+                </DockPanel>
+                <TextBlock Style="{StaticResource Hint}"
+                           Text="Pfade relativ zum linken bzw. rechten Ordner. Sie gelten auf beiden Seiten." />
+
+                <TextBlock Text="Dateien mit diesen Attributen ausschließen:" Style="{StaticResource FieldLabel}" />
+                <StackPanel Orientation="Horizontal">
+                    <CheckBox x:Name="ExcludeReadOnlyBox" Content="Schreibgeschützt" Margin="0,0,16,0" />
+                    <CheckBox x:Name="ExcludeHiddenBox" Content="Versteckt" Margin="0,0,16,0" />
+                    <CheckBox x:Name="ExcludeSystemBox" Content="System" />
+                </StackPanel>
+
+                <TextBlock Text="Weitere Optionen:" Style="{StaticResource FieldLabel}" />
+                <CheckBox x:Name="RecycleBox" Content="Überschriebene und gelöschte Dateien in den Papierkorb verschieben"
+                          Margin="0,0,0,4" />
+                <CheckBox x:Name="CheckContentsBox" Margin="0,0,0,4"
+                          Content="Dateiinhalte prüfen (langsamer, erkennt aber gleiche Dateien mit anderem Datum)" />
+                <CheckBox x:Name="ActiveForRunAllBox" Content="Bei „Alle ausführen“ berücksichtigen" />
+            </StackPanel>
+        </Expander>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,-4,0">
+            <Button Content="OK" IsDefault="True" Click="Ok_Click" />
+            <Button Content="Abbrechen" IsCancel="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>
