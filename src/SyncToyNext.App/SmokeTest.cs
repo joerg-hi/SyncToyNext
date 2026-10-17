@@ -134,6 +134,13 @@ internal sealed class SmokeTest
         await Capture(preview, $"{mode}-5-vorschau");
         preview.Close();
 
+        var working = new PreviewWindow(new[] { pairs[0] }, autoRun: false, new SyncEngine(), log, _ => { }) { Owner = main };
+        working.Show();
+        await WaitUntil(() => working.RunButton.IsEnabled, TimeSpan.FromSeconds(30));
+        working.ShowWorkingStateForScreenshot(pairs[0]);
+        await Capture(working, $"{mode}-5b-vorschau-laeuft");
+        working.Close();
+
         var run = new PreviewWindow(pairs.Take(2).ToList(), autoRun: true, new SyncEngine(), log, _ => { }) { Owner = main };
         run.Show();
         await WaitUntil(() => run.ResultBar.Visibility == Visibility.Visible, TimeSpan.FromSeconds(60));

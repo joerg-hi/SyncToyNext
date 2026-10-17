@@ -86,29 +86,54 @@ public partial class PreviewWindow : Window
     {
         SetBusy(true, "Ordner werden eingelesen …");
         SetTaskbar(TaskbarItemProgressState.Indeterminate, 0);
+        WorkingPanel.Visibility = Visibility.Visible;
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
 
         var rows = new List<OperationRow>();
-        foreach (var pair in _pairs)
+        for (int index = 0; index < _pairs.Count; index++)
         {
+            var pair = _pairs[index];
             if (token.IsCancellationRequested) break;
             ProgressText.Text = $"Lese „{pair.Name}“ ein …";
+
+            // Schritte für dieses Ordnerpaar erklären
+            var steps = CreateSteps(pair);
+            StepsList.ItemsSource = steps.All;
+            WorkingTitle.Text = _pairs.Count == 1
+                ? "Was passiert gerade?"
+                : $"Was passiert gerade? (Ordnerpaar {index + 1} von {_pairs.Count}: {pair.Name})";
+            steps.Left.State = StepState.Running;
+            steps.Right.State = StepState.Running;
+
             try
             {
                 string name = pair.Name;
-                var progress = new Progress<PreviewProgress>(p => ProgressText.Text = p.Stage switch
+                var progress = new Progress<PreviewProgress>(p =>
                 {
-                    PreviewStage.Scanning => $"Lese „{name}“ ein … {p.Count:N0} Einträge",
-                    PreviewStage.Comparing => $"Vergleiche „{name}“ ({p.Count:N0} Einträge) …",
-                    PreviewStage.CheckingContents => $"Prüfe Dateiinhalte von „{name}“ … {p.Count:N0} Dateien verglichen",
-                    _ => ProgressText.Text,
+                    if (token.IsCancellationRequested) return; // späte Meldungen nach dem Abbruch ignorieren
+                    UpdateSteps(steps, pair, p);
+                    ProgressText.Text = p.Stage switch
+                    {
+                        PreviewStage.Scanning => $"Lese „{name}“ ein … {p.Count:N0} Einträge",
+                        PreviewStage.Comparing => $"Vergleiche „{name}“ ({p.Count:N0} Einträge) …",
+                        PreviewStage.CheckingContents => $"Prüfe Dateiinhalte von „{name}“ … {p.Count:N0} Dateien verglichen",
+                        _ => ProgressText.Text,
+                    };
                 });
-                var plan = await Task.Run(() => _engine.Preview(pair, token, progress), token);
+                // WaitAsync: Bei „Abbrechen“ sofort weiter, auch wenn ein Netzlaufwerk gerade noch antwortet.
+                // Das Einlesen im Hintergrund beendet sich dann von selbst beim nächsten Prüfpunkt.
+                var plan = await Task.Run(() => _engine.Preview(pair, token, progress), token).WaitAsync(token);
                 _plans.Add((pair, plan));
+                steps.Compare.State = StepState.Done;
+                steps.Compare.Detail = plan.Operations.Count == 0
+                    ? "Keine Unterschiede gefunden."
+                    : $"{plan.Operations.Count:N0} Aktionen nötig.";
+                if (steps.Contents is not null) steps.Contents.State = StepState.Done;
 
                 // Zeilen im Hintergrund vorbereiten; die Tabelle wird am Ende in einem Schritt befüllt
                 // (zeilenweises Einfügen ist bei sehr vielen Aktionen extrem langsam).
+                steps.List.State = StepState.Running;
                 if (plan.Operations.Count > 0)
                 {
                     ProgressText.Text = $"Bereite {plan.Operations.Count:N0} Aktionen für die Anzeige vor …";
@@ -116,8 +141,10 @@ public partial class PreviewWindow : Window
                     {
                         op.PropertyChanged += Operation_PropertyChanged;
                         return new OperationRow(pair, op);
-                    }).ToList(), token));
+                    }).ToList(), token).WaitAsync(token));
                 }
+
+                steps.List.State = StepState.Done;
 
                 foreach (string w in plan.Warnings) _warnings.Add(Prefix(pair, w));
             }
@@ -139,6 +166,8 @@ public partial class PreviewWindow : Window
             _view = CreateView(_rows);
         }
 
+        WorkingPanel.Visibility = Visibility.Collapsed;
+
         bool cancelled = token.IsCancellationRequested;
         SetBusy(false, cancelled ? "Vorschau abgebrochen." : "");
         SetTaskbar(TaskbarItemProgressState.None, 0);
@@ -151,6 +180,62 @@ public partial class PreviewWindow : Window
 
         // Auch ohne Aktionen wird ausgeführt: Dabei werden der Lauf vermerkt und die Statusdateien geschrieben.
         if (_autoRun) await RunAsync();
+    }
+
+    private sealed record Steps(PreviewStep Left, PreviewStep Right, PreviewStep Compare, PreviewStep? Contents, PreviewStep List)
+    {
+        public List<PreviewStep> All => new[] { Left, Right, Compare, Contents, List }.OfType<PreviewStep>().ToList();
+    }
+
+    private static Steps CreateSteps(FolderPair pair)
+    {
+        var contents = pair.Options.CheckFileContents
+            ? new PreviewStep("Dateiinhalte prüfen",
+                "Dateien, die auf beiden Seiten gleich groß sind, werden Byte für Byte verglichen (Option „Dateiinhalte prüfen“). Über das Netzwerk dauert das lange.")
+            : null;
+        return new Steps(
+            new PreviewStep($"Linken Ordner einlesen: {UiHelpers.FolderName(pair.LeftPath)}", pair.LeftPath),
+            new PreviewStep($"Rechten Ordner einlesen: {UiHelpers.FolderName(pair.RightPath)}", pair.RightPath),
+            new PreviewStep("Mit dem Stand des letzten Laufs vergleichen",
+                "Welche Dateien und Ordner sind neu, geändert, umbenannt oder gelöscht? Grundlage sind die Statusdateien SyncToyNext_….dat in beiden Ordnern."),
+            contents,
+            new PreviewStep("Liste der Aktionen aufbauen", "Die gefundenen Aktionen erscheinen danach in der Tabelle."));
+    }
+
+    private void UpdateSteps(Steps steps, FolderPair pair, PreviewProgress p)
+    {
+        steps.Left.Detail = $"{p.LeftCount:N0} Einträge{(p.LeftDone ? " – fertig" : " bisher")} · {pair.LeftPath}";
+        steps.Right.Detail = $"{p.RightCount:N0} Einträge{(p.RightDone ? " – fertig" : " bisher")} · {pair.RightPath}";
+        steps.Left.State = p.LeftDone ? StepState.Done : StepState.Running;
+        steps.Right.State = p.RightDone ? StepState.Done : StepState.Running;
+
+        if (p.Stage is PreviewStage.Comparing or PreviewStage.CheckingContents)
+        {
+            steps.Compare.State = StepState.Running;
+        }
+
+        if (p.Stage == PreviewStage.CheckingContents && steps.Contents is not null)
+        {
+            steps.Contents.State = StepState.Running;
+            steps.Contents.Detail = $"{p.Count:N0} Dateien verglichen …";
+        }
+
+    }
+
+    /// <summary>
+    /// Für den Starttest: zeigt die Erklärung mit einem typischen Zwischenstand, damit sie auf einem
+    /// Bildschirmfoto geprüft werden kann (die echte Vorschau ist im Test zu schnell fertig).
+    /// </summary>
+    internal void ShowWorkingStateForScreenshot(FolderPair pair)
+    {
+        var steps = CreateSteps(pair);
+        StepsList.ItemsSource = steps.All;
+        UpdateSteps(steps, pair, new PreviewProgress(PreviewStage.Scanning, 274852, 120345, 154507, LeftDone: true));
+        WorkingTitle.Text = "Was passiert gerade?";
+        WorkingPanel.Visibility = Visibility.Visible;
+        Progress.Visibility = Visibility.Visible;
+        Progress.IsIndeterminate = true;
+        ProgressText.Text = $"Lese „{pair.Name}“ ein … 274.852 Einträge";
     }
 
     private ICollectionView CreateView(List<OperationRow> rows)

@@ -63,13 +63,32 @@ public sealed class SyncEngine
         var filter = new FileFilter(pair.Options);
         var leftWarnings = new List<string>();
         var rightWarnings = new List<string>();
-        int leftCount = 0, rightCount = 0;
-        void Report() => progress?.Report(new PreviewProgress(PreviewStage.Scanning, Volatile.Read(ref leftCount) + Volatile.Read(ref rightCount)));
+        int leftCount = 0, rightCount = 0, leftDone = 0, rightDone = 0;
+        void Report()
+        {
+            int l = Volatile.Read(ref leftCount), r = Volatile.Read(ref rightCount);
+            progress?.Report(new PreviewProgress(PreviewStage.Scanning, l + r, l, r,
+                Volatile.Read(ref leftDone) == 1, Volatile.Read(ref rightDone) == 1));
+        }
 
         // Beide Seiten gleichzeitig einlesen; schlägt eine fehl, wird die andere abgebrochen.
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var leftTask = Task.Run(() => ScanSide(pair.LeftPath, filter, leftWarnings, cts, n => { Volatile.Write(ref leftCount, n); Report(); }));
-        var rightTask = Task.Run(() => ScanSide(pair.RightPath, filter, rightWarnings, cts, n => { Volatile.Write(ref rightCount, n); Report(); }));
+        var leftTask = Task.Run(() =>
+        {
+            var result = ScanSide(pair.LeftPath, filter, leftWarnings, cts, n => { Volatile.Write(ref leftCount, n); Report(); });
+            Volatile.Write(ref leftCount, result.Count);
+            Volatile.Write(ref leftDone, 1);
+            Report();
+            return result;
+        });
+        var rightTask = Task.Run(() =>
+        {
+            var result = ScanSide(pair.RightPath, filter, rightWarnings, cts, n => { Volatile.Write(ref rightCount, n); Report(); });
+            Volatile.Write(ref rightCount, result.Count);
+            Volatile.Write(ref rightDone, 1);
+            Report();
+            return result;
+        });
         var leftSnapshotTask = Task.Run(() => SnapshotStore.Load(pair.LeftPath, pair.Id));
         var rightSnapshotTask = Task.Run(() => SnapshotStore.Load(pair.RightPath, pair.Id));
 
@@ -87,7 +106,8 @@ public sealed class SyncEngine
 
         cancellationToken.ThrowIfCancellationRequested();
         var warnings = leftWarnings.Concat(rightWarnings).ToList();
-        progress?.Report(new PreviewProgress(PreviewStage.Comparing, leftTask.Result.Count + rightTask.Result.Count));
+        progress?.Report(new PreviewProgress(PreviewStage.Comparing, leftTask.Result.Count + rightTask.Result.Count,
+            leftTask.Result.Count, rightTask.Result.Count, true, true));
 
         // Inhaltsvergleiche (nur mit „Dateiinhalte prüfen“) zählen, damit der Fortschritt sichtbar bleibt.
         int compared = 0;
@@ -104,7 +124,8 @@ public sealed class SyncEngine
             if (now - lastReport >= 200)
             {
                 lastReport = now;
-                progress?.Report(new PreviewProgress(PreviewStage.CheckingContents, compared));
+                progress?.Report(new PreviewProgress(PreviewStage.CheckingContents, compared,
+                    leftTask.Result.Count, rightTask.Result.Count, true, true));
             }
 
             return equal;

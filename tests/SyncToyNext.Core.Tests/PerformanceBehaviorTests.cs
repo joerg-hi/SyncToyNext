@@ -58,7 +58,10 @@ public class PerformanceBehaviorTests
         var reports = new List<PreviewProgress>();
         t.Engine.Preview(t.Pair, progress: new SynchronousProgress(reports.Add));
 
-        Assert.Equal(3, reports.Last(r => r.Stage == PreviewStage.Scanning).Count);
+        var lastScan = reports.Last(r => r.Stage == PreviewStage.Scanning);
+        Assert.Equal(3, lastScan.Count);
+        Assert.Contains(reports, r => r.Stage == PreviewStage.Scanning && r.LeftDone && r.LeftCount == 1);
+        Assert.Contains(reports, r => r.Stage == PreviewStage.Scanning && r.RightDone && r.RightCount == 2);
         Assert.Contains(reports, r => r.Stage == PreviewStage.Comparing && r.Count == 3);
     }
 
@@ -74,6 +77,32 @@ public class PerformanceBehaviorTests
         t.Engine.Preview(t.Pair, progress: new SynchronousProgress(reports.Add));
 
         Assert.Contains(reports, r => r.Stage == PreviewStage.CheckingContents && r.Count == 1);
+    }
+
+    [Fact]
+    public void Scan_StopsPromptly_WhenCancelled()
+    {
+        using var t = new TestFolders();
+        for (int i = 0; i < 50; i++) t.Write(Left, $"ordner{i}/datei.txt", "x");
+
+        using var cts = new CancellationTokenSource();
+        int reports = 0;
+        var ex = Record.Exception(() => FolderScanner.Scan(t.Left, new FileFilter(new PairOptions()), null, cts.Token,
+            progress: _ => { if (++reports == 1) cts.Cancel(); }, parallelism: 1));
+
+        Assert.IsAssignableFrom<OperationCanceledException>(ex is AggregateException agg ? agg.Flatten().InnerExceptions[0] : ex);
+    }
+
+    [Fact]
+    public void Preview_ThrowsCancellation_WhenCancelledBeforeStart()
+    {
+        using var t = new TestFolders();
+        t.Write(Left, "a.txt", "A");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var ex = Record.Exception(() => t.Engine.Preview(t.Pair, cts.Token));
+        Assert.IsAssignableFrom<OperationCanceledException>(ex);
     }
 
     [Fact]

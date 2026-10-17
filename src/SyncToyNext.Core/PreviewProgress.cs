@@ -12,5 +12,19 @@ public enum PreviewStage
     CheckingContents,
 }
 
-/// <summary>Fortschritt der Vorschau: aktuelle Phase und Anzahl der bisher bearbeiteten Einträge bzw. Dateien.</summary>
-public readonly record struct PreviewProgress(PreviewStage Stage, int Count);
+/// <summary>
+/// Fortschritt der Vorschau.
+/// </summary>
+/// <param name="Stage">Aktuelle Phase.</param>
+/// <param name="Count">Beim Einlesen: Einträge beider Seiten zusammen; beim Inhaltsvergleich: verglichene Dateien.</param>
+/// <param name="LeftCount">Bisher eingelesene Einträge des linken Ordners.</param>
+/// <param name="RightCount">Bisher eingelesene Einträge des rechten Ordners.</param>
+/// <param name="LeftDone">Der linke Ordner ist vollständig eingelesen.</param>
+/// <param name="RightDone">Der rechte Ordner ist vollständig eingelesen.</param>
+public readonly record struct PreviewProgress(
+    PreviewStage Stage,
+    int Count,
+    int LeftCount = 0,
+    int RightCount = 0,
+    bool LeftDone = false,
+    bool RightDone = false);

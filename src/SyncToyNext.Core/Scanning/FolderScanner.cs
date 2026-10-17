@@ -43,7 +43,7 @@ public static class FolderScanner
             throw new DirectoryNotFoundException($"Der Ordner \"{root}\" existiert nicht oder ist nicht erreichbar.");
         }
 
-        var scan = new ScanState(root, filter, progress);
+        var scan = new ScanState(root, filter, progress, cancellationToken);
 
         // Der Wurzelordner muss lesbar sein; ein Fehler dort bricht das Einlesen ab.
         var level = scan.ReadDirectory("", isRoot: true);
@@ -77,14 +77,16 @@ public static class FolderScanner
         private readonly string _root;
         private readonly FileFilter _filter;
         private readonly Action<int>? _progress;
+        private readonly CancellationToken _cancellationToken;
         private int _count;
         private long _lastReport;
 
-        public ScanState(string root, FileFilter filter, Action<int>? progress)
+        public ScanState(string root, FileFilter filter, Action<int>? progress, CancellationToken cancellationToken)
         {
             _root = root;
             _filter = filter;
             _progress = progress;
+            _cancellationToken = cancellationToken;
         }
 
         public ConcurrentDictionary<string, FileEntry> Result { get; } = new(PathUtil.Comparer);
@@ -96,12 +98,19 @@ public static class FolderScanner
         /// <summary>Liest einen Ordner und gibt die (nicht ausgefilterten) Unterordner zurück.</summary>
         public List<string> ReadDirectory(string relative, bool isRoot)
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             var subfolders = new List<string>();
             List<RawEntry> children;
             try
             {
                 string full = relative.Length == 0 ? _root : PathUtil.ToFullPath(_root, relative);
-                children = new FileSystemEnumerable<RawEntry>(full, Transform, Options).ToList();
+                // Auch innerhalb eines großen Ordners regelmäßig auf „Abbrechen“ prüfen.
+                children = new List<RawEntry>();
+                foreach (var child in new FileSystemEnumerable<RawEntry>(full, Transform, Options))
+                {
+                    if ((children.Count & 255) == 0) _cancellationToken.ThrowIfCancellationRequested();
+                    children.Add(child);
+                }
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
             {

@@ -275,6 +275,60 @@
                     <TextBlock x:Name="EmptyGridText" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0"
                                HorizontalAlignment="Center" />
                 </StackPanel>
+
+                <!-- Erklärung während der Vorschau: was gerade gelesen und verglichen wird -->
+                <ScrollViewer x:Name="WorkingPanel" VerticalScrollBarVisibility="Auto" Visibility="Collapsed"
+                              Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel MaxWidth="640" Margin="24,28" HorizontalAlignment="Center">
+                        <TextBlock x:Name="WorkingTitle" Text="Was passiert gerade?" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Style="{StaticResource SecondaryText}" Margin="0,8,0,16"
+                                   Text="SyncToyNext liest in beiden Ordnern alle Dateien und Unterordner ein (Name, Größe und Änderungsdatum) und vergleicht sie mit dem Stand nach dem letzten Lauf. So ergibt sich, was neu, geändert, umbenannt oder gelöscht ist und kopiert bzw. gelöscht werden muss." />
+
+                        <ItemsControl x:Name="StepsList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,14">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="StepGlyph" Text="{Binding Glyph}" FontSize="18" Width="28"
+                                                   VerticalAlignment="Top" Margin="0,1,0,0"
+                                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource Glyph}" />
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                                            <TextBlock x:Name="StepTitle" Text="{Binding Title}" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Text="{Binding Detail}" Style="{StaticResource CaptionText}" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding State}" Value="Running">
+                                            <Setter TargetName="StepGlyph" Property="Foreground" Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                            <Setter TargetName="StepTitle" Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding State}" Value="Done">
+                                            <Setter TargetName="StepGlyph" Property="Foreground" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+                                            <Setter TargetName="StepTitle" Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Border Style="{StaticResource InfoBarInfo}" Margin="0,6,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE946;"
+                                           Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                <TextBlock TextWrapping="Wrap" Margin="10,0,0,0" MaxWidth="560"
+                                           Text="Dabei wird noch nichts verändert. Erst „Ausführen“ kopiert, benennt um oder löscht Dateien. Auf Netzlaufwerken (NAS) dauert das Einlesen am längsten." />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
             </Grid>
         </Border>
 
