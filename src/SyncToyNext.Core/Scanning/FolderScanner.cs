@@ -11,8 +11,6 @@ namespace SyncToyNext.Core.Scanning;
 /// Auf Netzlaufwerken (NAS, Freigaben) ist die Wartezeit je Anfrage der Engpass, nicht die Bandbreite.
 /// Deshalb werden mehrere Ordner gleichzeitig gelesen, mit großem Puffer (weniger Anfragen je Ordner),
 /// und Größe, Datum und Attribute direkt aus dem Verzeichnis-Listing übernommen (keine Abfrage je Datei).
-/// Gefundene Unterordner kommen in eine gemeinsame Warteschlange; ein langsamer oder sehr großer Ordner
-/// hält die übrigen also nicht auf.
 /// </remarks>
 public static class FolderScanner
 {
@@ -21,7 +19,6 @@ public static class FolderScanner
 
     private const int BufferSize = 64 * 1024;
     private const int ProgressIntervalMs = 200;
-    private const int BatchSize = 256;
 
     private static readonly EnumerationOptions Options = new()
     {
@@ -33,80 +30,39 @@ public static class FolderScanner
     };
 
     /// <param name="progress">Wird regelmäßig mit der Anzahl der bisher gelesenen Einträge aufgerufen (aus beliebigen Threads).</param>
-    /// <param name="monitor">Zeigt laufend, wie viel gelesen ist und welcher Ordner gerade gelesen wird.</param>
     public static Dictionary<string, FileEntry> Scan(
         string root,
         FileFilter filter,
         ICollection<string>? warnings = null,
         CancellationToken cancellationToken = default,
         Action<int>? progress = null,
-        int parallelism = DefaultParallelism,
-        ScanMonitor? monitor = null)
+        int parallelism = DefaultParallelism)
     {
         if (!Directory.Exists(root))
         {
             throw new DirectoryNotFoundException($"Der Ordner \"{root}\" existiert nicht oder ist nicht erreichbar.");
         }
 
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var scan = new ScanState(root, filter, progress, monitor, cts.Token);
+        var scan = new ScanState(root, filter, progress, cancellationToken);
 
         // Der Wurzelordner muss lesbar sein; ein Fehler dort bricht das Einlesen ab.
-        var queue = new ConcurrentQueue<string>(scan.ReadDirectory("", isRoot: true));
-        int pending = queue.Count; // Ordner in der Warteschlange oder in Arbeit
-        if (pending > 0)
+        var level = scan.ReadDirectory("", isRoot: true);
+
+        // Danach Ebene für Ebene, jeweils mehrere Ordner gleichzeitig.
+        while (level.Count > 0)
         {
-            int workers = Math.Max(1, parallelism);
-            using var available = new SemaphoreSlim(pending);
-            int finished = 0;
-
-            void Work()
-            {
-                try
+            cancellationToken.ThrowIfCancellationRequested();
+            var next = new ConcurrentBag<string>();
+            Parallel.ForEach(
+                level,
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, parallelism), CancellationToken = cancellationToken },
+                relative =>
                 {
-                    while (true)
-                    {
-                        available.Wait(cts.Token);
-                        if (Volatile.Read(ref finished) == 1) return;
-                        if (!queue.TryDequeue(out var relative)) continue;
-
-                        foreach (string sub in scan.ReadDirectory(relative, isRoot: false))
-                        {
-                            Interlocked.Increment(ref pending);
-                            queue.Enqueue(sub);
-                            available.Release();
-                        }
-
-                        if (Interlocked.Decrement(ref pending) == 0)
-                        {
-                            Volatile.Write(ref finished, 1);
-                            available.Release(workers); // alle wartenden Threads beenden
-                            return;
-                        }
-                    }
-                }
-                catch
-                {
-                    cts.Cancel(); // die übrigen Threads nicht ewig warten lassen
-                    throw;
-                }
-            }
-
-            var tasks = Enumerable.Range(0, workers).Select(_ => Task.Run(Work)).ToArray();
-            try
-            {
-                Task.WaitAll(tasks);
-            }
-            catch (AggregateException ex)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var first = ex.Flatten().InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException)
-                            ?? ex.Flatten().InnerExceptions[0];
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
-            }
+                    foreach (string sub in scan.ReadDirectory(relative, isRoot: false)) next.Add(sub);
+                });
+            level = next.ToList();
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
         progress?.Invoke(scan.Count);
         if (warnings is not null)
         {
@@ -121,17 +77,15 @@ public static class FolderScanner
         private readonly string _root;
         private readonly FileFilter _filter;
         private readonly Action<int>? _progress;
-        private readonly ScanMonitor? _monitor;
         private readonly CancellationToken _cancellationToken;
         private int _count;
         private long _lastReport;
 
-        public ScanState(string root, FileFilter filter, Action<int>? progress, ScanMonitor? monitor, CancellationToken cancellationToken)
+        public ScanState(string root, FileFilter filter, Action<int>? progress, CancellationToken cancellationToken)
         {
             _root = root;
             _filter = filter;
             _progress = progress;
-            _monitor = monitor;
             _cancellationToken = cancellationToken;
         }
 
@@ -147,20 +101,15 @@ public static class FolderScanner
             _cancellationToken.ThrowIfCancellationRequested();
             var subfolders = new List<string>();
             List<RawEntry> children;
-            _monitor?.Begin(relative);
             try
             {
                 string full = relative.Length == 0 ? _root : PathUtil.ToFullPath(_root, relative);
-                // Auch innerhalb eines großen Ordners regelmäßig auf „Abbrechen“ prüfen und Fortschritt melden.
+                // Auch innerhalb eines großen Ordners regelmäßig auf „Abbrechen“ prüfen.
                 children = new List<RawEntry>();
                 foreach (var child in new FileSystemEnumerable<RawEntry>(full, Transform, Options))
                 {
+                    if ((children.Count & 255) == 0) _cancellationToken.ThrowIfCancellationRequested();
                     children.Add(child);
-                    if (children.Count % BatchSize == 0)
-                    {
-                        _cancellationToken.ThrowIfCancellationRequested();
-                        ReportProgress(BatchSize);
-                    }
                 }
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
@@ -168,10 +117,6 @@ public static class FolderScanner
                 if (isRoot) throw;
                 Warnings.Enqueue($"Ordner \"{PathUtil.ToDisplay(relative)}\" konnte nicht gelesen werden: {ex.Message}");
                 return subfolders;
-            }
-            finally
-            {
-                _monitor?.End(relative);
             }
 
             foreach (var child in children)
@@ -191,7 +136,7 @@ public static class FolderScanner
                 }
             }
 
-            ReportProgress(children.Count % BatchSize);
+            ReportProgress(children.Count);
             return subfolders;
         }
 
@@ -207,7 +152,6 @@ public static class FolderScanner
         private void ReportProgress(int added)
         {
             int total = Interlocked.Add(ref _count, added);
-            _monitor?.SetCount(total);
             if (_progress is null) return;
 
             long now = Environment.TickCount64;

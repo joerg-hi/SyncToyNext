@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using SyncToyNext.Core.Logging;
 using SyncToyNext.Core.Model;
 using SyncToyNext.Core.Planning;
 using SyncToyNext.Core.Scanning;
@@ -158,14 +156,12 @@ public sealed class SyncExecutor
                     return;
                 }
 
-                var clock = Stopwatch.StartNew();
-                var outcome = CopyFile(sourceInfo, targetInfo, recycle, reportBytes, ct);
-                clock.Stop();
+                CopyFile(sourceInfo, targetInfo, recycle, reportBytes, ct);
                 result.BytesCopied += op.Size;
 
                 var written = new FileInfo(target);
                 op.ResultEntry = new FileEntry(op.TargetPath, false, written.Length, written.LastWriteTimeUtc, written.Attributes);
-                Succeed(op, DescribeCopy(op.Size, clock.Elapsed, outcome));
+                Succeed(op);
                 break;
             }
 
@@ -186,7 +182,7 @@ public sealed class SyncExecutor
     /// Kopiert über eine temporäre Datei im Zielordner, damit bei einem Abbruch nie eine halbe Datei
     /// unter dem echten Namen liegt. Zeitstempel und Attribute werden übernommen.
     /// </summary>
-    private CopyOutcome CopyFile(FileInfo source, FileInfo target, bool recycle, Action<long> reportBytes, CancellationToken ct)
+    private void CopyFile(FileInfo source, FileInfo target, bool recycle, Action<long> reportBytes, CancellationToken ct)
     {
         string directory = target.DirectoryName!;
         EnsureDirectory(directory);
@@ -195,7 +191,7 @@ public sealed class SyncExecutor
 
         try
         {
-            var outcome = FileCopier.Copy(source.FullName, temp, reportBytes, ct);
+            FileCopier.Copy(source.FullName, temp, reportBytes, ct);
 
             if (target.Exists)
             {
@@ -208,28 +204,12 @@ public sealed class SyncExecutor
             }
 
             File.Move(temp, target.FullName, overwrite: true);
-            return outcome;
         }
         catch
         {
             TryDelete(temp);
             throw;
         }
-    }
-
-    /// <summary>
-    /// Messwerte für Ergebnis und Protokoll: bei großen Dateien Dauer und Tempo, und immer, wenn die
-    /// Windows-Kopierfunktion versagt hat und blockweise kopiert wurde (über das Netz deutlich langsamer).
-    /// </summary>
-    private static string? DescribeCopy(long size, TimeSpan duration, CopyOutcome outcome)
-    {
-        bool fallback = outcome.FirstError is not null;
-        if (size < LargeFileBytes && !fallback) return null;
-
-        string text = $"{SyncLog.FormatBytes(size)} in {TransferEstimator.FormatDuration(duration)}";
-        if (duration.TotalSeconds >= 0.5) text += $", {SyncLog.FormatBytes((long)(size / duration.TotalSeconds))}/s";
-        if (fallback) text += $", blockweise kopiert nach Fehler: {outcome.FirstError}";
-        return text;
     }
 
     /// <summary>

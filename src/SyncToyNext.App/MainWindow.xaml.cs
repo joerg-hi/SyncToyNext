@@ -149,52 +149,6 @@ public partial class MainWindow : Window
         if (SelectedPair is { } pair) _ = UiHelpers.OpenInExplorerAsync(pair.RightPath);
     }
 
-    /// <summary>
-    /// Kopiert eine ausgewählte Datei testweise in den rechten Ordner, einmal mit der Windows-Kopierfunktion
-    /// und einmal blockweise, und zeigt das Tempo. Zum Vergleich mit dem Explorer.
-    /// </summary>
-    private async void SpeedTest_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedPair is not { } pair) return;
-
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Datei für den Geschwindigkeitstest wählen (gut geeignet: 100–500 MB)",
-            InitialDirectory = Directory.Exists(pair.LeftPath) ? pair.LeftPath : null,
-            CheckFileExists = true,
-        };
-        if (dialog.ShowDialog(this) != true) return;
-
-        string file = dialog.FileName;
-        string previousStatus = StatusText.Text;
-        StatusText.Text = $"Messe Kopiertempo nach „{pair.RightPath}“ … (die Datei wird zweimal kopiert)";
-        Cursor = Cursors.Wait;
-        IsEnabled = false;
-        try
-        {
-            var results = await Task.Run(() => Core.Execution.CopySpeedTest.Run(file, pair.RightPath));
-            var lines = results.Select(m => m.Error is null
-                ? $"{m.Method}:\n    {SyncLog.FormatBytes((long)m.BytesPerSecond)}/s  ({SyncLog.FormatBytes(m.Bytes)} in {Core.Execution.TransferEstimator.FormatDuration(m.Duration)})"
-                : $"{m.Method}:\n    Fehler: {m.Error}");
-            MessageBox.Show(this,
-                $"Kopiertempo von\n{file}\nnach\n{pair.RightPath}\n\n{string.Join("\n\n", lines)}\n\n" +
-                "Zum Vergleich: dieselbe Datei mit dem Explorer in diesen Ordner kopieren. " +
-                "Die Testkopien wurden wieder gelöscht.",
-                UiHelpers.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            MessageBox.Show(this, $"Der Geschwindigkeitstest ist fehlgeschlagen:\n{ex.Message}",
-                UiHelpers.AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            IsEnabled = true;
-            Cursor = null;
-            StatusText.Text = previousStatus;
-        }
-    }
-
     // ------------------------------------------------------------------ Ordnerpaare verwalten
 
     private void NewPair_Click(object sender, RoutedEventArgs e) => CreatePair(null);
