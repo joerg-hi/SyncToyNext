@@ -278,7 +278,7 @@
 
                 <!-- Erklärung während der Vorschau: was gerade gelesen und verglichen wird -->
                 <ScrollViewer x:Name="WorkingPanel" VerticalScrollBarVisibility="Auto" Visibility="Collapsed"
-                              Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                              Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
                     <StackPanel MaxWidth="640" Margin="24,28" HorizontalAlignment="Center">
                         <TextBlock x:Name="WorkingTitle" Text="Was passiert gerade?" FontSize="18" FontWeight="SemiBold" />
                         <TextBlock Style="{StaticResource SecondaryText}" Margin="0,8,0,16"
