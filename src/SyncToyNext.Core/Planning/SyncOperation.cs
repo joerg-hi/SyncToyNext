@@ -9,7 +9,10 @@ public enum OperationKind
     /// <summary>Ordner auf der Zielseite anlegen.</summary>
     CreateFolder,
 
-    /// <summary>Datei oder Ordner auf der Zielseite umbenennen bzw. verschieben.</summary>
+    /// <summary>Ordner samt Inhalt auf der Zielseite umbenennen bzw. verschieben.</summary>
+    RenameFolder,
+
+    /// <summary>Datei auf der Zielseite umbenennen bzw. verschieben.</summary>
     Rename,
 
     /// <summary>Datei auf der Zielseite löschen.</summary>
@@ -101,6 +104,7 @@ public sealed class SyncOperation : INotifyPropertyChanged
     public string KindText => Kind switch
     {
         OperationKind.CreateFolder => "Neuer Ordner",
+        OperationKind.RenameFolder => "Ordner umbenennen",
         OperationKind.Rename => "Umbenennen",
         OperationKind.Delete => "Löschen",
         OperationKind.Copy => "Neu",
@@ -109,7 +113,7 @@ public sealed class SyncOperation : INotifyPropertyChanged
         _ => Kind.ToString(),
     };
 
-    public string DisplayPath => Kind == OperationKind.Rename && SourcePath is not null
+    public string DisplayPath => Kind is OperationKind.Rename or OperationKind.RenameFolder && SourcePath is not null
         ? $"{PathUtil.ToDisplay(SourcePath)} → {PathUtil.ToDisplay(TargetPath)}"
         : PathUtil.ToDisplay(TargetPath);
 
@@ -117,7 +121,7 @@ public sealed class SyncOperation : INotifyPropertyChanged
     public IEnumerable<string> AffectedPaths()
     {
         yield return TargetPath;
-        if (SourcePath is not null && !PathUtil.Comparer.Equals(SourcePath, TargetPath))
+        if (SourcePath is not null && !string.Equals(SourcePath, TargetPath, StringComparison.Ordinal))
         {
             yield return SourcePath;
         }

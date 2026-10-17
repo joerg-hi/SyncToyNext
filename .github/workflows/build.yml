@@ -18,7 +18,16 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '10.0.x'
+
+      - name: Version bestimmen
+        id: version
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $version = $env:GITHUB_REF_NAME.TrimStart('v') }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $version"
 
       - name: Test
         run: dotnet test SyncToyNext.sln -c Release
@@ -26,20 +35,47 @@ jobs:
       - name: Publish
         shell: pwsh
         run: |
+          $v = '${{ steps.version.outputs.version }}'
           foreach ($project in 'src/SyncToyNext.App', 'src/SyncToyNext.Cmd') {
             dotnet publish $project -c Release -r win-x64 --self-contained true `
-              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+              -p:Version=$v -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
               -p:EnableCompressionInSingleFile=true -p:DebugType=none `
               -o out/SyncToyNext-win-x64
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
             dotnet publish $project -c Release -r win-x64 --self-contained false `
-              -p:PublishSingleFile=true -p:DebugType=none `
+              -p:Version=$v -p:PublishSingleFile=true -p:DebugType=none `
               -o out/SyncToyNext-win-x64-framework
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           Copy-Item README.md, LICENSE out/SyncToyNext-win-x64
           Copy-Item README.md, LICENSE out/SyncToyNext-win-x64-framework
+
+      - name: Starttest der Oberfläche
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'smoke.txt'
+          $p = Start-Process -FilePath out/SyncToyNext-win-x64/SyncToyNext.exe `
+            -ArgumentList '--smoke-test', "`"$log`"" -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Error 'Starttest hat nicht innerhalb von 3 Minuten geendet.'; exit 1 }
+          if (Test-Path $log) { Get-Content $log }
+          if ($p.ExitCode -ne 0) { Write-Error "Starttest fehlgeschlagen (Rückgabewert $($p.ExitCode))."; exit 1 }
+
+      - name: Installer bauen
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" "/DSourceDir=..\out\SyncToyNext-win-x64" installer\SyncToyNext.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SyncToyNext-Setup
+          path: out/SyncToyNext-Setup-*.exe
 
       - uses: actions/upload-artifact@v4
         with:
@@ -59,4 +95,5 @@ jobs:
         run: |
           Compress-Archive -Path out/SyncToyNext-win-x64/* -DestinationPath out/SyncToyNext-win-x64.zip
           Compress-Archive -Path out/SyncToyNext-win-x64-framework/* -DestinationPath out/SyncToyNext-win-x64-framework.zip
-          gh release create "${{ github.ref_name }}" out/SyncToyNext-win-x64.zip out/SyncToyNext-win-x64-framework.zip --generate-notes
+          $setup = Get-ChildItem out/SyncToyNext-Setup-*.exe | Select-Object -First 1
+          gh release create "${{ github.ref_name }}" $setup.FullName out/SyncToyNext-win-x64.zip out/SyncToyNext-win-x64-framework.zip --generate-notes

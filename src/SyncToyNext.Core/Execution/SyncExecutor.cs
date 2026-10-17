@@ -92,10 +92,21 @@ public sealed class SyncExecutor
             case OperationKind.Rename:
             {
                 string oldPath = PathUtil.ToFullPath(targetRoot, op.SourcePath!);
+                bool caseOnly = PathUtil.Comparer.Equals(op.SourcePath, op.TargetPath);
                 if (!Unchanged(oldPath, op.TargetEntry)) { Skip(op, "Datei wurde seit der Vorschau verändert"); return; }
-                if (File.Exists(target) || Directory.Exists(target)) { Skip(op, "Ziel existiert bereits"); return; }
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.Move(oldPath, target);
+                if (!caseOnly && (File.Exists(target) || Directory.Exists(target))) { Skip(op, "Ziel existiert bereits"); return; }
+                MoveEntry(oldPath, target, isDirectory: false, caseOnly);
+                Succeed(op);
+                break;
+            }
+
+            case OperationKind.RenameFolder:
+            {
+                string oldPath = PathUtil.ToFullPath(targetRoot, op.SourcePath!);
+                bool caseOnly = PathUtil.Comparer.Equals(op.SourcePath, op.TargetPath);
+                if (!Directory.Exists(oldPath)) { Skip(op, "Ordner existiert nicht mehr"); return; }
+                if (!caseOnly && (File.Exists(target) || Directory.Exists(target))) { Skip(op, "Ziel existiert bereits"); return; }
+                MoveEntry(oldPath, target, isDirectory: true, caseOnly);
                 Succeed(op);
                 break;
             }
@@ -201,6 +212,33 @@ public sealed class SyncExecutor
             try { File.SetAttributes(target, attributes); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* Attribute sind nicht kritisch */ }
         }
+    }
+
+    /// <summary>
+    /// Verschiebt eine Datei oder einen Ordner. Ändert sich nur die Schreibweise, geht es über einen
+    /// Zwischennamen, weil Windows sonst Quelle und Ziel als identisch ansieht.
+    /// </summary>
+    private static void MoveEntry(string oldPath, string newPath, bool isDirectory, bool caseOnly)
+    {
+        string? parent = Path.GetDirectoryName(newPath);
+        if (parent is not null) Directory.CreateDirectory(parent);
+
+        if (caseOnly)
+        {
+            string temp = $"{newPath}.{Guid.NewGuid().ToString("N")[..8]}{FileFilter.TempFileSuffix}";
+            Move(oldPath, temp, isDirectory);
+            Move(temp, newPath, isDirectory);
+        }
+        else
+        {
+            Move(oldPath, newPath, isDirectory);
+        }
+    }
+
+    private static void Move(string from, string to, bool isDirectory)
+    {
+        if (isDirectory) Directory.Move(from, to);
+        else File.Move(from, to);
     }
 
     private void RemoveFile(string path, bool recycle)

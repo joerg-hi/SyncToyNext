@@ -2,115 +2,316 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="SyncToyNext"
-        Width="920" Height="580" MinWidth="720" MinHeight="440"
-        WindowStartupLocation="CenterScreen">
-    <DockPanel>
-        <Menu DockPanel.Dock="Top">
-            <MenuItem Header="_Datei">
-                <MenuItem Header="_Neues Ordnerpaar …" Click="NewPair_Click" />
-                <Separator />
-                <MenuItem Header="_Beenden" Click="Exit_Click" />
-            </MenuItem>
-            <MenuItem Header="_Extras">
-                <MenuItem Header="_Protokoll öffnen" Click="OpenLog_Click" />
-                <MenuItem Header="_Zeitgesteuert ausführen (Aufgabenplanung) …" Click="Scheduler_Click" />
-            </MenuItem>
-            <MenuItem Header="_Hilfe">
-                <MenuItem Header="_Über SyncToyNext" Click="About_Click" />
-            </MenuItem>
-        </Menu>
+        Icon="Assets/SyncToyNext.ico"
+        Width="1040" Height="660" MinWidth="780" MinHeight="500"
+        WindowStartupLocation="CenterScreen"
+        AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop"
+        KeyDown="Window_KeyDown">
+    <Window.TaskbarItemInfo>
+        <!-- Fortschritt in der Taskleiste, gesteuert vom Vorschau-/Ausführungsfenster -->
+        <TaskbarItemInfo />
+    </Window.TaskbarItemInfo>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-        <Border DockPanel.Dock="Bottom" BorderThickness="0,1,0,0"
-                BorderBrush="{x:Static SystemColors.ActiveBorderBrush}" Padding="6">
-            <DockPanel>
-                <Button x:Name="RunAllButton" DockPanel.Dock="Right" Content="Alle ausführen"
-                        Click="RunAll_Click"
-                        ToolTip="Alle Ordnerpaare ausführen, bei denen „Bei Alle ausführen berücksichtigen“ aktiv ist" />
-                <StackPanel Orientation="Horizontal">
-                    <Button Content="Neues Ordnerpaar …" Click="NewPair_Click" />
-                    <Button x:Name="EditButton" Content="Bearbeiten …" Click="EditPair_Click" />
-                    <Button x:Name="DeleteButton" Content="Löschen" Click="DeletePair_Click" />
+        <!-- Kopfzeile -->
+        <DockPanel Grid.Row="0" Margin="20,14,16,10">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Click="NewPair_Click" ToolTip="Neues Ordnerpaar anlegen (Strg+N)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE710;" />
+                        <TextBlock Text="Neues Ordnerpaar" Margin="8,0,0,0" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="MoreButton" Style="{StaticResource SubtleButton}" Margin="6,0,0,0"
+                        Click="MoreButton_Click" ToolTip="Weitere Funktionen">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE712;" />
+                    <Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Protokoll öffnen" InputGestureText="Strg+L" Click="OpenLog_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8A5;" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="Zeitgesteuert ausführen …" Click="Scheduler_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE823;" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="Datenordner öffnen" Click="OpenDataFolder_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <Separator />
+                            <MenuItem Header="Über SyncToyNext" InputGestureText="F1" Click="About_Click">
+                                <MenuItem.Icon>
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE946;" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Image Source="{StaticResource LogoImage}" Width="40" Height="40" />
+                <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="SyncToyNext" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="Ordner abgleichen – wie mit SyncToy" Style="{StaticResource CaptionText}" />
                 </StackPanel>
-            </DockPanel>
-        </Border>
+            </StackPanel>
+        </DockPanel>
 
-        <Grid>
+        <!-- Inhalt -->
+        <Grid Grid.Row="1" Margin="16,0,16,12">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="250" MinWidth="160" />
-                <ColumnDefinition Width="5" />
+                <ColumnDefinition Width="290" MinWidth="220" MaxWidth="480" />
+                <ColumnDefinition Width="12" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <DockPanel Grid.Column="0">
-                <TextBlock DockPanel.Dock="Top" Text="Ordnerpaare" FontWeight="SemiBold" Margin="10,10,10,6" />
-                <ListBox x:Name="PairList" DisplayMemberPath="Name" BorderThickness="0"
-                         SelectionChanged="PairList_SelectionChanged"
-                         MouseDoubleClick="PairList_MouseDoubleClick" />
-            </DockPanel>
+            <!-- Liste der Ordnerpaare -->
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="6">
+                <DockPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="10,6,10,8">
+                        <TextBlock x:Name="PairCountText" DockPanel.Dock="Right" Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="Ordnerpaare" FontWeight="SemiBold" />
+                    </DockPanel>
 
-            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
-                          Background="{x:Static SystemColors.ControlLightBrush}" />
-
-            <Grid Grid.Column="2" Margin="20,14,20,14">
-                <TextBlock x:Name="EmptyText" TextWrapping="Wrap" VerticalAlignment="Center"
-                           HorizontalAlignment="Center" TextAlignment="Center" FontSize="14"
-                           Style="{StaticResource Hint}"
-                           Text="Noch keine Ordnerpaare vorhanden.&#x0a;Klicken Sie auf „Neues Ordnerpaar …“, um zu beginnen." />
-
-                <ScrollViewer x:Name="DetailsPanel" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
-                    <StackPanel>
-                        <TextBlock x:Name="PairNameText" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
-
-                        <Grid Margin="0,14,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid.Resources>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Margin" Value="0,4,12,4" />
-                                    <Setter Property="TextWrapping" Value="Wrap" />
-                                </Style>
-                            </Grid.Resources>
-
-                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Linker Ordner:" FontWeight="SemiBold" />
-                            <TextBlock Grid.Row="0" Grid.Column="1">
-                                <Hyperlink Click="OpenLeft_Click" ToolTip="Im Explorer öffnen"><Run x:Name="LeftPathRun" /></Hyperlink>
-                            </TextBlock>
-
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Rechter Ordner:" FontWeight="SemiBold" />
-                            <TextBlock Grid.Row="1" Grid.Column="1">
-                                <Hyperlink Click="OpenRight_Click" ToolTip="Im Explorer öffnen"><Run x:Name="RightPathRun" /></Hyperlink>
-                            </TextBlock>
-
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Aktion:" FontWeight="SemiBold" />
-                            <StackPanel Grid.Row="2" Grid.Column="1">
-                                <TextBlock x:Name="ActionText" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                <TextBlock x:Name="ActionDescriptionText" Style="{StaticResource Hint}" Margin="0,0,0,4" />
-                            </StackPanel>
-
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Optionen:" FontWeight="SemiBold" />
-                            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="OptionsText" />
-
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Letzter Lauf:" FontWeight="SemiBold" />
-                            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="LastRunText" />
-                        </Grid>
-
-                        <StackPanel Orientation="Horizontal" Margin="-4,18,0,0">
-                            <Button Content="Vorschau" Click="Preview_Click" MinWidth="120"
-                                    ToolTip="Zeigt, was passieren würde, ohne etwas zu ändern" />
-                            <Button Content="Ausführen" Click="Run_Click" MinWidth="120" FontWeight="SemiBold" />
+                    <Button x:Name="RunAllButton" DockPanel.Dock="Bottom" Style="{StaticResource PrimaryButton}"
+                            HorizontalAlignment="Stretch" Margin="6,8,6,6" Click="RunAll_Click"
+                            ToolTip="Alle Ordnerpaare ausführen, die für „Alle ausführen“ aktiv sind (Strg+F5)">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE768;" />
+                            <TextBlock Text="Alle ausführen" Margin="8,0,0,0" />
                         </StackPanel>
+                    </Button>
+
+                    <ListBox x:Name="PairList" BorderThickness="0" Background="Transparent"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="PairList_SelectionChanged"
+                             MouseDoubleClick="PairList_MouseDoubleClick">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="2,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource IconBadge}" Width="32" Height="32" CornerRadius="16">
+                                        <TextBlock Style="{StaticResource Glyph}" Text="{Binding Glyph}"
+                                                   Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Subtitle}" Style="{StaticResource CaptionText}"
+                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                        <ListBox.ContextMenu>
+                            <ContextMenu x:Name="PairContextMenu" Opened="PairContextMenu_Opened">
+                                <MenuItem Header="Vorschau" InputGestureText="Strg+P" Click="Preview_Click">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE890;" /></MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Ausführen" InputGestureText="F5" Click="Run_Click">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE768;" /></MenuItem.Icon>
+                                </MenuItem>
+                                <Separator />
+                                <MenuItem Header="Bearbeiten …" InputGestureText="F2" Click="EditPair_Click">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE70F;" /></MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Duplizieren …" Click="DuplicatePair_Click">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE8C8;" /></MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Löschen" InputGestureText="Entf" Click="DeletePair_Click">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;" /></MenuItem.Icon>
+                                </MenuItem>
+                                <Separator />
+                                <MenuItem Header="Linken Ordner öffnen" Click="OpenLeft_Click">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" /></MenuItem.Icon>
+                                </MenuItem>
+                                <MenuItem Header="Rechten Ordner öffnen" Click="OpenRight_Click">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" /></MenuItem.Icon>
+                                </MenuItem>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="12" HorizontalAlignment="Stretch" Background="Transparent"
+                          ResizeBehavior="PreviousAndNext" />
+
+            <!-- Willkommensseite, solange es keine Ordnerpaare gibt -->
+            <Border x:Name="EmptyPanel" Grid.Column="2" Style="{StaticResource Card}" Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="440">
+                    <Image Source="{StaticResource LogoImage}" Width="96" Height="96" />
+                    <TextBlock Text="Willkommen bei SyncToyNext" FontSize="24" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" Margin="0,18,0,8" />
+                    <TextBlock Style="{StaticResource SecondaryText}" TextAlignment="Center"
+                               Text="Ein Ordnerpaar verbindet zwei Ordner, zum Beispiel „Dokumente“ und eine externe Festplatte. SyncToyNext hält sie auf Wunsch auf dem gleichen Stand." />
+                    <Button Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center" Margin="0,20,0,0"
+                            Padding="18,8" Click="NewPair_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE710;" />
+                            <TextBlock Text="Erstes Ordnerpaar anlegen" Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                    <TextBlock Style="{StaticResource CaptionText}" TextAlignment="Center" Margin="0,14,0,0"
+                               Text="Tipp: Sie können auch zwei Ordner aus dem Explorer auf dieses Fenster ziehen." />
+                </StackPanel>
+            </Border>
+
+            <!-- Details des ausgewählten Ordnerpaars -->
+            <ScrollViewer x:Name="DetailsPanel" Grid.Column="2" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                <StackPanel Margin="4,0,4,4">
+                    <DockPanel Margin="0,2,0,14">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Style="{StaticResource SubtleButton}" Click="EditPair_Click" ToolTip="Bearbeiten (F2)">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE70F;" />
+                                    <TextBlock Text="Bearbeiten" Margin="8,0,0,0" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource SubtleButton}" Click="DeletePair_Click" ToolTip="Löschen (Entf)" Margin="4,0,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE74D;" />
+                                    <TextBlock Text="Löschen" Margin="8,0,0,0" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <TextBlock x:Name="PairNameText" FontSize="26" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    </DockPanel>
+
+                    <!-- Ordner links → Aktion → Ordner rechts -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;" FontSize="20"
+                                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                    <TextBlock Text="Linker Ordner" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock x:Name="LeftPathText" Margin="0,10,0,0" TextWrapping="Wrap" />
+                                <StackPanel x:Name="LeftMissingPanel" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE7BA;" FontSize="12"
+                                               Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+                                    <TextBlock Text="Nicht erreichbar" Style="{StaticResource CaptionText}" Margin="6,0,0,0" />
+                                </StackPanel>
+                                <Button Style="{StaticResource LinkButton}" Margin="0,10,0,0" Click="OpenLeft_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" FontSize="13" />
+                                        <TextBlock Text="Im Explorer öffnen" Margin="6,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <Border Width="52" Height="52" CornerRadius="26" HorizontalAlignment="Center"
+                                    Background="{DynamicResource AccentFillColorDefaultBrush}">
+                                <TextBlock x:Name="ActionGlyphText" Style="{StaticResource Glyph}" FontSize="22"
+                                           Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+                            </Border>
+                            <TextBlock x:Name="ActionText" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,8,0,0" />
+                        </StackPanel>
+
+                        <Border Grid.Column="2" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;" FontSize="20"
+                                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                    <TextBlock Text="Rechter Ordner" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock x:Name="RightPathText" Margin="0,10,0,0" TextWrapping="Wrap" />
+                                <StackPanel x:Name="RightMissingPanel" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE7BA;" FontSize="12"
+                                               Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+                                    <TextBlock Text="Nicht erreichbar" Style="{StaticResource CaptionText}" Margin="6,0,0,0" />
+                                </StackPanel>
+                                <Button Style="{StaticResource LinkButton}" Margin="0,10,0,0" Click="OpenRight_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" FontSize="13" />
+                                        <TextBlock Text="Im Explorer öffnen" Margin="6,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <TextBlock x:Name="ActionDescriptionText" Style="{StaticResource SecondaryText}" Margin="2,12,2,0" />
+
+                    <!-- Optionen und letzter Lauf -->
+                    <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Optionen" Style="{StaticResource SectionTitle}" />
+                            <ItemsControl x:Name="OptionChips">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,8,8" Padding="10,4" CornerRadius="12"
+                                                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                            <TextBlock Text="{Binding}" FontSize="12" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE823;" FontSize="14"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock x:Name="LastRunText" Style="{StaticResource SecondaryText}" Margin="8,0,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                        <Button Click="Preview_Click" MinWidth="130" Padding="16,8" ToolTip="Zeigt, was passieren würde, ohne etwas zu ändern (Strg+P)">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE890;" />
+                                <TextBlock Text="Vorschau" Margin="8,0,0,0" />
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PrimaryButton}" Click="Run_Click" MinWidth="130" Padding="16,8"
+                                Margin="10,0,0,0" ToolTip="Ordnerpaar jetzt abgleichen (F5)">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Glyph}" Text="&#xE768;" />
+                                <TextBlock Text="Ausführen" Margin="8,0,0,0" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
-                </ScrollViewer>
-            </Grid>
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
-    </DockPanel>
+
+        <!-- Statusleiste -->
+        <Border Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+                Padding="20,6">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Style="{StaticResource CaptionText}"
+                           Text="Tipp: Ordner aus dem Explorer hierher ziehen, um ein neues Paar anzulegen" />
+                <TextBlock x:Name="StatusText" Style="{StaticResource CaptionText}" />
+            </DockPanel>
+        </Border>
+    </Grid>
 </Window>

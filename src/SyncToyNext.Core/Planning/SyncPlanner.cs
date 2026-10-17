@@ -86,10 +86,17 @@ public static class SyncPlanner
 
         public SyncPlan Build()
         {
-            PlanRenames(Side.Left);
-            if (_action == SyncAction.Synchronize)
+            // Reihenfolge: ganze Ordner zuerst, dann einzelne Dateien, zuletzt reine Änderungen der Schreibweise.
+            var renameSides = _action == SyncAction.Synchronize ? new[] { Side.Left, Side.Right } : new[] { Side.Left };
+            foreach (var side in renameSides)
             {
-                PlanRenames(Side.Right);
+                PlanFolderRenames(side);
+                PlanRenames(side);
+            }
+
+            foreach (var side in renameSides)
+            {
+                PlanCaseRenames(side);
             }
 
             PlanFiles();
@@ -106,6 +113,168 @@ public static class SyncPlanner
 
             return new SyncPlan(_pair, operations, _warnings, CheckMassDeletion(operations),
                 _origLeftSnap, _origRightSnap, _origLeft.Count, _origRight.Count);
+        }
+
+        // ------------------------------------------------------------------ Ordner-Umbenennungen
+
+        /// <summary>
+        /// Erkennt auf der Seite <paramref name="side"/> umbenannte oder verschobene Ordner: Ein Ordner fehlt
+        /// gegenüber dem gespeicherten Stand und genau ein neuer Ordner enthält dieselben Dateinamen
+        /// (mindestens die Hälfte davon mit identischer Größe und Änderungszeit). Der Ordner wird dann auf
+        /// der anderen Seite in einem Schritt umbenannt, statt alle Dateien neu zu kopieren.
+        /// </summary>
+        private void PlanFolderRenames(Side side)
+        {
+            var current = Files(side);
+            var snap = Snap(side);
+            if (snap.Count == 0) return;
+
+            var removed = snap.Values
+                .Where(e => e.IsDirectory && !current.ContainsKey(e.RelativePath))
+                .OrderBy(e => PathUtil.Depth(e.RelativePath))
+                .ToList();
+            var added = current.Values
+                .Where(e => e.IsDirectory && !snap.ContainsKey(e.RelativePath))
+                .Select(e => e.RelativePath)
+                .ToList();
+            if (removed.Count == 0 || added.Count == 0) return;
+
+            var removedContent = GroupFilesBelow(snap.Values, removed.Select(e => e.RelativePath));
+            var addedContent = GroupFilesBelow(current.Values, added);
+            var usedAdded = new List<string>();
+            var doneRemoved = new List<string>();
+
+            foreach (var oldDir in removed)
+            {
+                string from = oldDir.RelativePath;
+                if (doneRemoved.Any(d => PathUtil.IsSameOrBelow(from, d))) continue;
+                if (!removedContent.TryGetValue(from, out var oldFiles) || oldFiles.Count == 0) continue;
+
+                var matches = added
+                    .Where(a => !usedAdded.Any(u => PathUtil.IsSameOrBelow(a, u)))
+                    .Where(a => addedContent.TryGetValue(a, out var newFiles) && SameFolderContent(oldFiles, newFiles))
+                    .ToList();
+                if (matches.Count != 1) continue;
+
+                string to = matches[0];
+                TryPropagateFolderRename(side, from, to);
+
+                // Auch wenn die andere Seite den Ordner nicht hat: Untergeordnete Ordner sind damit erledigt.
+                usedAdded.Add(to);
+                doneRemoved.Add(from);
+            }
+        }
+
+        /// <summary>
+        /// Ordnet jedem der angegebenen Ordner die darunterliegenden Dateien zu (Schlüssel relativ zum Ordner).
+        /// </summary>
+        private static Dictionary<string, Dictionary<string, FileEntry>> GroupFilesBelow(
+            IEnumerable<FileEntry> entries, IEnumerable<string> folders)
+        {
+            var result = new Dictionary<string, Dictionary<string, FileEntry>>(PathUtil.Comparer);
+            foreach (string folder in folders)
+            {
+                result[folder] = new Dictionary<string, FileEntry>(PathUtil.Comparer);
+            }
+
+            foreach (var entry in entries)
+            {
+                if (entry.IsDirectory) continue;
+                for (string? parent = PathUtil.GetParent(entry.RelativePath); parent is not null; parent = PathUtil.GetParent(parent))
+                {
+                    if (result.TryGetValue(parent, out var files))
+                    {
+                        files[entry.RelativePath[(parent.Length + 1)..]] = entry;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static bool SameFolderContent(Dictionary<string, FileEntry> a, Dictionary<string, FileEntry> b)
+        {
+            if (a.Count == 0 || a.Count != b.Count) return false;
+            int sameMetadata = 0;
+            foreach (var (name, entry) in a)
+            {
+                if (!b.TryGetValue(name, out var other)) return false;
+                if (entry.Size == other.Size && entry.LastWriteTimeUtc == other.LastWriteTimeUtc) sameMetadata++;
+            }
+
+            return sameMetadata * 2 >= a.Count;
+        }
+
+        private void TryPropagateFolderRename(Side side, string from, string to)
+        {
+            Side target = side.Other();
+            var targetFiles = Files(target);
+
+            if (!targetFiles.TryGetValue(from, out var targetEntry) || !targetEntry.IsDirectory) return;
+            if (targetFiles.ContainsKey(to)) return;
+
+            _renames.Add(new SyncOperation(OperationKind.RenameFolder, target, to)
+            {
+                SourcePath = from,
+                TargetEntry = targetEntry,
+                Reason = side == Side.Left ? "Ordner links umbenannt" : "Ordner rechts umbenannt",
+            });
+
+            MoveTree(targetFiles, from, to);
+            MoveTree(Snap(target), from, to);
+            MoveTree(Snap(side), from, to);
+        }
+
+        private static void MoveTree(Dictionary<string, FileEntry> dict, string from, string to)
+        {
+            var keys = dict.Keys.Where(k => PathUtil.IsSameOrBelow(k, from)).ToList();
+            var moved = keys.Select(k => dict[k]).ToList();
+            foreach (string key in keys) dict.Remove(key);
+            foreach (var entry in moved)
+            {
+                string newPath = to + entry.RelativePath[from.Length..];
+                dict[newPath] = entry.WithPath(newPath);
+            }
+        }
+
+        // ------------------------------------------------------------------ Schreibweise
+
+        /// <summary>
+        /// Erkennt Umbenennungen, die nur die Groß-/Kleinschreibung ändern (z. B. "bericht.txt" → "Bericht.txt").
+        /// Windows behandelt beide Namen als dieselbe Datei, daher fallen sie bei den übrigen Vergleichen nicht auf.
+        /// </summary>
+        private void PlanCaseRenames(Side side)
+        {
+            var current = Files(side);
+            var snap = Snap(side);
+            var targetFiles = Files(side.Other());
+            if (snap.Count == 0) return;
+
+            foreach (var entry in current.Values.OrderBy(e => PathUtil.Depth(e.RelativePath)).ToList())
+            {
+                if (!snap.TryGetValue(entry.RelativePath, out var old)) continue;
+                string newName = PathUtil.GetName(entry.RelativePath);
+                string oldName = PathUtil.GetName(old.RelativePath);
+                if (string.Equals(newName, oldName, StringComparison.Ordinal)) continue;
+
+                if (!targetFiles.TryGetValue(entry.RelativePath, out var targetEntry)) continue;
+                if (targetEntry.IsDirectory != entry.IsDirectory) continue;
+                if (!string.Equals(PathUtil.GetName(targetEntry.RelativePath), oldName, StringComparison.Ordinal)) continue;
+
+                string? parent = PathUtil.GetParent(targetEntry.RelativePath);
+                string newPath = parent is null ? newName : parent + "/" + newName;
+
+                _renames.Add(new SyncOperation(entry.IsDirectory ? OperationKind.RenameFolder : OperationKind.Rename,
+                    side.Other(), newPath)
+                {
+                    SourcePath = targetEntry.RelativePath,
+                    TargetEntry = targetEntry,
+                    SourceEntry = entry.IsDirectory ? null : entry,
+                    Reason = side == Side.Left ? "Schreibweise links geändert" : "Schreibweise rechts geändert",
+                });
+
+                targetFiles[entry.RelativePath] = targetEntry.WithPath(newPath);
+            }
         }
 
         // ------------------------------------------------------------------ Umbenennungen

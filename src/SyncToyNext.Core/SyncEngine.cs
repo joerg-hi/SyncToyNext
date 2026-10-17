@@ -117,8 +117,17 @@ public sealed class SyncEngine
         {
             foreach (string path in op.AffectedPaths())
             {
-                Revert(left, plan.LeftSnapshot, path);
-                Revert(right, plan.RightSnapshot, path);
+                if (op.Kind == OperationKind.RenameFolder)
+                {
+                    // Ein nicht umbenannter Ordner betrifft auch alles darin.
+                    RevertTree(left, plan.LeftSnapshot, path);
+                    RevertTree(right, plan.RightSnapshot, path);
+                }
+                else
+                {
+                    Revert(left, plan.LeftSnapshot, path);
+                    Revert(right, plan.RightSnapshot, path);
+                }
             }
         }
 
@@ -132,6 +141,20 @@ public sealed class SyncEngine
             state[path] = old;
         else
             state.Remove(path);
+    }
+
+    private static void RevertTree(Dictionary<string, FileEntry> state, IReadOnlyDictionary<string, FileEntry>? oldSnapshot, string folder)
+    {
+        foreach (string key in state.Keys.Where(k => PathUtil.IsSameOrBelow(k, folder)).ToList())
+        {
+            state.Remove(key);
+        }
+
+        if (oldSnapshot is null) return;
+        foreach (var entry in oldSnapshot.Values.Where(e => PathUtil.IsSameOrBelow(e.RelativePath, folder)))
+        {
+            state[entry.RelativePath] = entry;
+        }
     }
 
     private static void Save(string root, Guid pairId, IEnumerable<FileEntry> entries, SyncResult result)

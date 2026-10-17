@@ -1,0 +1,48 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Dieselbe Grafik wie assets/logo.svg (erzeugt von assets/make_icon.py), als Vektor für das Programm. -->
+    <DrawingImage x:Key="LogoImage">
+        <DrawingImage.Drawing>
+            <DrawingGroup>
+                <GeometryDrawing Brush="Transparent">
+                    <GeometryDrawing.Geometry>
+                        <RectangleGeometry Rect="0,0,256,256" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing>
+                    <GeometryDrawing.Brush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Offset="0" Color="#2AA8F2" />
+                            <GradientStop Offset="1" Color="#0A5CC2" />
+                        </LinearGradientBrush>
+                    </GeometryDrawing.Brush>
+                    <GeometryDrawing.Geometry>
+                        <RectangleGeometry Rect="12,12,232,232" RadiusX="56" RadiusY="56" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing>
+                    <GeometryDrawing.Brush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Offset="0" Color="#47FFFFFF" />
+                            <GradientStop Offset="1" Color="#00FFFFFF" />
+                        </LinearGradientBrush>
+                    </GeometryDrawing.Brush>
+                    <GeometryDrawing.Geometry>
+                        <RectangleGeometry Rect="12,12,232,116" RadiusX="56" RadiusY="56" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Geometry="M70.0,112.5 A60,60 0 0 1 172.6,87.9 M186.0,143.5 A60,60 0 0 1 83.4,168.1">
+                    <GeometryDrawing.Pen>
+                        <Pen Brush="White" Thickness="22" StartLineCap="Round" EndLineCap="Round" />
+                    </GeometryDrawing.Pen>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="White"
+                                 Geometry="M186.4,75.4 L190.7,107.9 L158.8,100.3 Z M69.6,180.6 L65.3,148.1 L97.2,155.7 Z">
+                    <GeometryDrawing.Pen>
+                        <Pen Brush="White" Thickness="4" LineJoin="Round" />
+                    </GeometryDrawing.Pen>
+                </GeometryDrawing>
+            </DrawingGroup>
+        </DrawingImage.Drawing>
+    </DrawingImage>
+</ResourceDictionary>

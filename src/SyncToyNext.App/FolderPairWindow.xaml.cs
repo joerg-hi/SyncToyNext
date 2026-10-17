@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 using SyncToyNext.Core;
 using SyncToyNext.Core.Model;
@@ -14,9 +15,12 @@ public partial class FolderPairWindow : Window
     private readonly FolderPair? _original;
     private readonly IEnumerable<FolderPair> _allPairs;
 
-    public FolderPairWindow(FolderPair? original, IEnumerable<FolderPair> allPairs)
+    /// <param name="original">Zu bearbeitendes Paar oder <c>null</c> für ein neues.</param>
+    /// <param name="template">Vorbelegung für ein neues Paar (z. B. beim Duplizieren oder nach Drag &amp; Drop).</param>
+    public FolderPairWindow(FolderPair? original, IEnumerable<FolderPair> allPairs, FolderPair? template = null)
     {
         InitializeComponent();
+        WindowPlacement.Attach(this, "FolderPair", restorePosition: false);
         _original = original;
         _allPairs = allPairs;
 
@@ -24,8 +28,11 @@ public partial class FolderPairWindow : Window
         EchoText.Text = UiHelpers.ActionDescription(SyncAction.Echo);
         ContributeText.Text = UiHelpers.ActionDescription(SyncAction.Contribute);
 
-        var pair = original ?? new FolderPair();
+        var pair = original ?? template ?? new FolderPair();
         Title = original is null ? "Neues Ordnerpaar" : $"Ordnerpaar „{original.Name}“ bearbeiten";
+        HeaderText.Text = original is null ? "Neues Ordnerpaar" : "Ordnerpaar bearbeiten";
+        OkButton.Content = original is null ? "Anlegen" : "Speichern";
+
         NameBox.Text = pair.Name;
         LeftBox.Text = pair.LeftPath;
         RightBox.Text = pair.RightPath;
@@ -43,32 +50,73 @@ public partial class FolderPairWindow : Window
         RecycleBox.IsChecked = o.SaveOverwrittenToRecycleBin;
         CheckContentsBox.IsChecked = o.CheckFileContents;
         ActiveForRunAllBox.IsChecked = o.ActiveForRunAll;
-        OptionsExpander.IsExpanded = original is not null;
+        OptionsExpander.IsExpanded = original is not null || template is not null && template.Options.ExcludedSubfolders.Count > 0;
 
-        Loaded += (_, _) => NameBox.Focus();
+        Loaded += (_, _) =>
+        {
+            NameBox.Focus();
+            SuggestName();
+        };
     }
 
     /// <summary>Das neue bzw. geänderte Ordnerpaar nach „OK“.</summary>
     public FolderPair? Result { get; private set; }
 
+    // ------------------------------------------------------------------ Ordner wählen
+
     private void BrowseLeft_Click(object sender, RoutedEventArgs e) => Browse(LeftBox, "Linken Ordner auswählen");
 
     private void BrowseRight_Click(object sender, RoutedEventArgs e) => Browse(RightBox, "Rechten Ordner auswählen");
 
-    private void Browse(System.Windows.Controls.TextBox target, string title)
+    private void Browse(TextBox target, string title)
     {
         var dialog = new OpenFolderDialog { Title = title };
         if (Directory.Exists(target.Text)) dialog.InitialDirectory = target.Text;
         if (dialog.ShowDialog(this) == true)
         {
             target.Text = dialog.FolderName;
-            if (string.IsNullOrWhiteSpace(NameBox.Text) && !string.IsNullOrWhiteSpace(LeftBox.Text) && !string.IsNullOrWhiteSpace(RightBox.Text))
-            {
-                NameBox.Text = $"{Path.GetFileName(Path.TrimEndingDirectorySeparator(LeftBox.Text))} ↔ " +
-                               Path.GetFileName(Path.TrimEndingDirectorySeparator(RightBox.Text));
-            }
+            SuggestName();
         }
     }
+
+    private void PathBox_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = DroppedFolder(e) is not null ? DragDropEffects.Link : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void PathBox_PreviewDrop(object sender, DragEventArgs e)
+    {
+        if (DroppedFolder(e) is { } folder && sender is TextBox box)
+        {
+            box.Text = folder;
+            SuggestName();
+        }
+
+        e.Handled = true;
+    }
+
+    private static string? DroppedFolder(DragEventArgs e) =>
+        e.Data.GetData(DataFormats.FileDrop) is string[] paths ? paths.FirstOrDefault(Directory.Exists) : null;
+
+    /// <summary>Schlägt einen Namen vor, solange noch keiner eingegeben ist.</summary>
+    private void SuggestName()
+    {
+        if (!string.IsNullOrWhiteSpace(NameBox.Text)) return;
+        string left = FolderName(LeftBox.Text);
+        string right = FolderName(RightBox.Text);
+        if (left.Length > 0 && right.Length > 0) NameBox.Text = $"{left} ↔ {right}";
+    }
+
+    private static string FolderName(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        string trimmed = Path.TrimEndingDirectorySeparator(path.Trim());
+        string name = Path.GetFileName(trimmed);
+        return name.Length > 0 ? name : trimmed; // Laufwerk wie "E:\"
+    }
+
+    // ------------------------------------------------------------------ Unterordner
 
     private void AddSubfolder_Click(object sender, RoutedEventArgs e)
     {
@@ -76,14 +124,13 @@ public partial class FolderPairWindow : Window
         string right = RightBox.Text.Trim();
         if (!Directory.Exists(left) && !Directory.Exists(right))
         {
-            MessageBox.Show(this, "Bitte zuerst einen vorhandenen linken oder rechten Ordner angeben.",
-                Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            ShowError("Bitte zuerst einen vorhandenen linken oder rechten Ordner angeben.");
             return;
         }
 
         var dialog = new OpenFolderDialog
         {
-            Title = "Auszuschließenden Unterordner auswählen",
+            Title = "Auszuschließende Unterordner auswählen",
             InitialDirectory = Directory.Exists(left) ? left : right,
             Multiselect = true,
         };
@@ -94,8 +141,7 @@ public partial class FolderPairWindow : Window
             string? relative = ToRelative(selected, left) ?? ToRelative(selected, right);
             if (relative is null)
             {
-                MessageBox.Show(this, $"\"{selected}\" liegt weder im linken noch im rechten Ordner.",
-                    Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowError($"\"{selected}\" liegt weder im linken noch im rechten Ordner.");
                 continue;
             }
 
@@ -123,8 +169,18 @@ public partial class FolderPairWindow : Window
         }
     }
 
+    // ------------------------------------------------------------------ Speichern
+
+    private void ShowError(string message)
+    {
+        ErrorText.Text = message;
+        ErrorBar.Visibility = Visibility.Visible;
+    }
+
     private void Ok_Click(object sender, RoutedEventArgs e)
     {
+        ErrorBar.Visibility = Visibility.Collapsed;
+
         var pair = _original?.Clone() ?? new FolderPair();
         string oldLeft = pair.LeftPath;
         string oldRight = pair.RightPath;
@@ -157,37 +213,41 @@ public partial class FolderPairWindow : Window
 
         if (error is not null)
         {
-            MessageBox.Show(this, error, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            ShowError(error);
             return;
         }
 
         foreach (string path in new[] { pair.LeftPath, pair.RightPath })
         {
-            if (!Directory.Exists(path))
+            if (Directory.Exists(path)) continue;
+
+            var create = MessageBox.Show(this,
+                $"Der Ordner \"{path}\" existiert nicht.\n\nSoll er angelegt werden?",
+                Title, MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (create != MessageBoxResult.Yes) return;
+
+            try
             {
-                var create = MessageBox.Show(this,
-                    $"Der Ordner \"{path}\" existiert nicht.\n\nSoll er angelegt werden?",
-                    Title, MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (create != MessageBoxResult.Yes) return;
-                try
-                {
-                    Directory.CreateDirectory(path);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(this, $"Der Ordner konnte nicht angelegt werden:\n\n{ex.Message}", Title,
-                        MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
+                Directory.CreateDirectory(path);
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Der Ordner konnte nicht angelegt werden: {ex.Message}");
+                return;
             }
         }
 
-        // Zeigt das Paar auf andere Ordner, beginnt es mit einem neuen Stand (neue Kennung und damit
-        // neue Statusdateien), damit keine Löschungen aus einem alten Stand abgeleitet werden.
-        if (_original is not null
-            && (!string.Equals(oldLeft, pair.LeftPath, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(oldRight, pair.RightPath, StringComparison.OrdinalIgnoreCase)))
+        if (_original is null)
         {
+            // Neues Paar (auch beim Duplizieren): eigene Kennung und damit eigene Statusdateien.
+            pair.Id = Guid.NewGuid();
+            pair.LastRunUtc = null;
+        }
+        else if (!string.Equals(oldLeft, pair.LeftPath, StringComparison.OrdinalIgnoreCase)
+                 || !string.Equals(oldRight, pair.RightPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // Zeigt das Paar auf andere Ordner, beginnt es mit einem neuen Stand, damit keine
+            // Löschungen aus einem alten Stand abgeleitet werden.
             pair.Id = Guid.NewGuid();
             pair.LastRunUtc = null;
         }

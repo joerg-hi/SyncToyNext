@@ -52,6 +52,13 @@ public static class FolderScanner
                 string childRelative = relative.Length == 0 ? child.Name : relative + "/" + child.Name;
                 FileAttributes attributes = child.Attributes;
 
+                if (result.ContainsKey(childRelative))
+                {
+                    // Nur auf Dateisystemen mit Unterscheidung der Groß-/Kleinschreibung möglich.
+                    warnings?.Add($"\"{PathUtil.ToDisplay(childRelative)}\" existiert in mehreren Schreibweisen und wird nur einmal berücksichtigt.");
+                    continue;
+                }
+
                 if (child is DirectoryInfo childDir)
                 {
                     if (!filter.IncludeDirectory(childRelative, attributes)) continue;
