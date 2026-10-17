@@ -63,28 +63,36 @@ public sealed class SyncEngine
         var filter = new FileFilter(pair.Options);
         var leftWarnings = new List<string>();
         var rightWarnings = new List<string>();
-        int leftCount = 0, rightCount = 0, leftDone = 0, rightDone = 0;
+        int leftDone = 0, rightDone = 0, scanning = 1;
+        var leftMonitor = new ScanMonitor();
+        var rightMonitor = new ScanMonitor();
         void Report()
         {
-            int l = Volatile.Read(ref leftCount), r = Volatile.Read(ref rightCount);
-            progress?.Report(new PreviewProgress(PreviewStage.Scanning, l + r, l, r,
-                Volatile.Read(ref leftDone) == 1, Volatile.Read(ref rightDone) == 1));
+            if (Volatile.Read(ref scanning) == 0) return; // späte Meldung des Zeitgebers
+            bool ld = Volatile.Read(ref leftDone) == 1, rd = Volatile.Read(ref rightDone) == 1;
+            int l = leftMonitor.Count, r = rightMonitor.Count;
+            progress?.Report(new PreviewProgress(PreviewStage.Scanning, l + r, l, r, ld, rd,
+                ld ? null : new ScanActivity(leftMonitor.LongestReadingFolder, leftMonitor.SinceLastActivity),
+                rd ? null : new ScanActivity(rightMonitor.LongestReadingFolder, rightMonitor.SinceLastActivity)));
         }
+
+        // Regelmäßig melden, auch wenn ein Laufwerk gerade nicht antwortet: Dann sieht man, seit wann.
+        using var timer = progress is null ? null : new Timer(_ => Report(), null, 500, 500);
 
         // Beide Seiten gleichzeitig einlesen; schlägt eine fehl, wird die andere abgebrochen.
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var leftTask = Task.Run(() =>
         {
-            var result = ScanSide(pair.LeftPath, filter, leftWarnings, cts, n => { Volatile.Write(ref leftCount, n); Report(); });
-            Volatile.Write(ref leftCount, result.Count);
+            var result = ScanSide(pair.LeftPath, filter, leftWarnings, cts, leftMonitor);
+            leftMonitor.SetCount(result.Count);
             Volatile.Write(ref leftDone, 1);
             Report();
             return result;
         });
         var rightTask = Task.Run(() =>
         {
-            var result = ScanSide(pair.RightPath, filter, rightWarnings, cts, n => { Volatile.Write(ref rightCount, n); Report(); });
-            Volatile.Write(ref rightCount, result.Count);
+            var result = ScanSide(pair.RightPath, filter, rightWarnings, cts, rightMonitor);
+            rightMonitor.SetCount(result.Count);
             Volatile.Write(ref rightDone, 1);
             Report();
             return result;
@@ -104,6 +112,7 @@ public sealed class SyncEngine
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
         }
 
+        Volatile.Write(ref scanning, 0);
         cancellationToken.ThrowIfCancellationRequested();
         var warnings = leftWarnings.Concat(rightWarnings).ToList();
         progress?.Report(new PreviewProgress(PreviewStage.Comparing, leftTask.Result.Count + rightTask.Result.Count,
@@ -136,11 +145,11 @@ public sealed class SyncEngine
     }
 
     private static Dictionary<string, FileEntry> ScanSide(
-        string root, FileFilter filter, List<string> warnings, CancellationTokenSource cts, Action<int> progress)
+        string root, FileFilter filter, List<string> warnings, CancellationTokenSource cts, ScanMonitor monitor)
     {
         try
         {
-            return FolderScanner.Scan(root, filter, warnings, cts.Token, progress);
+            return FolderScanner.Scan(root, filter, warnings, cts.Token, monitor: monitor);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
