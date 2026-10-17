@@ -56,8 +56,8 @@
                 2. Rechts auf „Einfache Aufgabe erstellen …“ klicken und einen Namen vergeben.<LineBreak />
                 3. Den Zeitpunkt wählen, zum Beispiel täglich um 18:00 Uhr.<LineBreak />
                 4. Als Aktion „Programm starten“ wählen.<LineBreak />
-                5. Bei „Programm/Skript“ den Pfad zu SyncToyNextCmd.exe eintragen (ohne Anführungszeichen geht es
-                nur, wenn der Pfad keine Leerzeichen enthält) und bei „Argumente hinzufügen“ den Teil ab -R.<LineBreak />
+                5. Bei „Programm/Skript“ den Pfad zu SyncToyNextCmd.exe eintragen (alles in Anführungszeichen),
+                bei „Argumente hinzufügen“ den Rest ab -R.<LineBreak />
                 6. Fertigstellen. Die Ergebnisse stehen anschließend im Protokoll.
             </TextBlock>
         </StackPanel>
@@ -66,7 +66,7 @@
                 Background="{DynamicResource LayerFillColorDefaultBrush}" Padding="24,14" Margin="0,12,0,0">
             <DockPanel>
                 <Button DockPanel.Dock="Right" Content="Schließen" IsCancel="True" IsDefault="True" MinWidth="110" />
-                <Button Click="OpenScheduler_Click">
+                <Button Click="OpenScheduler_Click" HorizontalAlignment="Left">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Style="{StaticResource Glyph}" Text="&#xE8A7;" />
                         <TextBlock Text="Aufgabenplanung öffnen" Margin="8,0,0,0" />

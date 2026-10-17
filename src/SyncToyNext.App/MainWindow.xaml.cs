@@ -92,7 +92,9 @@ public partial class MainWindow : Window
         if (pair is null) return;
 
         PairNameText.Text = pair.Name;
+        LeftNameText.Text = UiHelpers.FolderName(pair.LeftPath);
         LeftPathText.Text = pair.LeftPath;
+        RightNameText.Text = UiHelpers.FolderName(pair.RightPath);
         RightPathText.Text = pair.RightPath;
         ActionGlyphText.Text = pair.Action == SyncAction.Synchronize ? "" : Glyphs.Forward;
         ActionText.Text = UiHelpers.ActionTitle(pair.Action);

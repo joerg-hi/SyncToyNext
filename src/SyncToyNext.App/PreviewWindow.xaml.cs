@@ -63,8 +63,10 @@ public partial class PreviewWindow : Window
         HeaderText.Text = autoRun ? "Ausführen" : "Vorschau";
         HeaderGlyph.Text = autoRun ? Glyphs.Play : Glyphs.View;
         SubHeaderText.Text = pairs.Count == 1
-            ? $"{pairs[0].Name} · {UiHelpers.ActionTitle(pairs[0].Action)} · {pairs[0].LeftPath}  ⇄  {pairs[0].RightPath}"
+            ? $"{pairs[0].Name} · {UiHelpers.ActionTitle(pairs[0].Action)}"
             : string.Join(" · ", pairs.Select(p => p.Name));
+        SubHeaderText.ToolTip = string.Join(Environment.NewLine,
+            pairs.Select(p => $"{p.Name}: {p.LeftPath}  ⇄  {p.RightPath}"));
 
         Loaded += async (_, _) => await StartAsync();
         Closing += OnClosing;

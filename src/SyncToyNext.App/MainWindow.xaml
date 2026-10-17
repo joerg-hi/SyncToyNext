@@ -202,12 +202,14 @@
 
                         <Border Grid.Column="0" Style="{StaticResource Card}">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;" FontSize="20"
+                                <TextBlock Text="LINKER ORDNER" Style="{StaticResource CaptionText}" FontWeight="SemiBold" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;" FontSize="22"
                                                Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
-                                    <TextBlock Text="Linker Ordner" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="LeftNameText" FontSize="16" FontWeight="SemiBold" Margin="10,0,0,0"
+                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="LeftPathText" Margin="0,10,0,0" TextWrapping="Wrap" />
+                                <TextBlock x:Name="LeftPathText" Style="{StaticResource CaptionText}" Margin="0,6,0,0" />
                                 <StackPanel x:Name="LeftMissingPanel" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">
                                     <TextBlock Style="{StaticResource Glyph}" Text="&#xE7BA;" FontSize="12"
                                                Foreground="{DynamicResource SystemFillColorCautionBrush}" />
@@ -233,12 +235,14 @@
 
                         <Border Grid.Column="2" Style="{StaticResource Card}">
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;" FontSize="20"
+                                <TextBlock Text="RECHTER ORDNER" Style="{StaticResource CaptionText}" FontWeight="SemiBold" />
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE8B7;" FontSize="22"
                                                Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
-                                    <TextBlock Text="Rechter Ordner" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="RightNameText" FontSize="16" FontWeight="SemiBold" Margin="10,0,0,0"
+                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock x:Name="RightPathText" Margin="0,10,0,0" TextWrapping="Wrap" />
+                                <TextBlock x:Name="RightPathText" Style="{StaticResource CaptionText}" Margin="0,6,0,0" />
                                 <StackPanel x:Name="RightMissingPanel" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">
                                     <TextBlock Style="{StaticResource Glyph}" Text="&#xE7BA;" FontSize="12"
                                                Foreground="{DynamicResource SystemFillColorCautionBrush}" />

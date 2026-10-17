@@ -188,8 +188,9 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn x:Name="PairColumn" Header="Ordnerpaar" Binding="{Binding PairName}" IsReadOnly="True" Width="130" />
-                        <DataGridTemplateColumn Header="Aktion" Width="160" SortMemberPath="Operation.Kind">
+                        <DataGridTextColumn x:Name="PairColumn" Header="Ordnerpaar" Binding="{Binding PairName}" IsReadOnly="True" Width="140"
+                                            ElementStyle="{StaticResource CellText}" />
+                        <DataGridTemplateColumn Header="Aktion" Width="150" SortMemberPath="Operation.Kind">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -199,18 +200,15 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTextColumn Header="Ziel" Binding="{Binding TargetText}" IsReadOnly="True" Width="80" />
-                        <DataGridTextColumn Header="Datei / Ordner" Binding="{Binding Operation.DisplayPath}" IsReadOnly="True" Width="*" />
-                        <DataGridTextColumn Header="Größe" Binding="{Binding SizeText}" IsReadOnly="True" Width="85" SortMemberPath="Operation.Size">
-                            <DataGridTextColumn.ElementStyle>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="HorizontalAlignment" Value="Right" />
-                                    <Setter Property="VerticalAlignment" Value="Center" />
-                                </Style>
-                            </DataGridTextColumn.ElementStyle>
-                        </DataGridTextColumn>
-                        <DataGridTextColumn Header="Grund" Binding="{Binding Operation.Reason}" IsReadOnly="True" Width="190" />
-                        <DataGridTemplateColumn Header="Ergebnis" Width="220" SortMemberPath="Operation.Status">
+                        <DataGridTextColumn Header="Ziel" Binding="{Binding TargetText}" IsReadOnly="True" Width="80"
+                                            ElementStyle="{StaticResource CellText}" />
+                        <DataGridTextColumn Header="Datei / Ordner" Binding="{Binding Operation.DisplayPath}" IsReadOnly="True" Width="*" MinWidth="160"
+                                            ElementStyle="{StaticResource CellText}" />
+                        <DataGridTextColumn Header="Größe" Binding="{Binding SizeText}" IsReadOnly="True" Width="90" SortMemberPath="Operation.Size"
+                                            ElementStyle="{StaticResource CellTextRight}" />
+                        <DataGridTextColumn Header="Grund" Binding="{Binding Operation.Reason}" IsReadOnly="True" Width="170"
+                                            ElementStyle="{StaticResource CellText}" />
+                        <DataGridTemplateColumn Header="Ergebnis" Width="190" SortMemberPath="Operation.Status">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding StatusText}">

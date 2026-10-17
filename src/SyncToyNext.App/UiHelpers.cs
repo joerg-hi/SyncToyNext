@@ -52,6 +52,15 @@ internal static class UiHelpers
         return chips;
     }
 
+    /// <summary>Letzter Teil eines Pfads, bei Laufwerken der Laufwerksbuchstabe (z. B. "E:\").</summary>
+    public static string FolderName(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        string trimmed = Path.TrimEndingDirectorySeparator(path.Trim());
+        string name = Path.GetFileName(trimmed);
+        return name.Length > 0 ? name : path.Trim();
+    }
+
     public static void OpenInExplorer(string path)
     {
         if (!Directory.Exists(path))

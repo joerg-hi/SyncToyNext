@@ -103,17 +103,9 @@ public partial class FolderPairWindow : Window
     private void SuggestName()
     {
         if (!string.IsNullOrWhiteSpace(NameBox.Text)) return;
-        string left = FolderName(LeftBox.Text);
-        string right = FolderName(RightBox.Text);
+        string left = UiHelpers.FolderName(LeftBox.Text);
+        string right = UiHelpers.FolderName(RightBox.Text);
         if (left.Length > 0 && right.Length > 0) NameBox.Text = $"{left} ↔ {right}";
-    }
-
-    private static string FolderName(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path)) return "";
-        string trimmed = Path.TrimEndingDirectorySeparator(path.Trim());
-        string name = Path.GetFileName(trimmed);
-        return name.Length > 0 ? name : trimmed; // Laufwerk wie "E:\"
     }
 
     // ------------------------------------------------------------------ Unterordner
