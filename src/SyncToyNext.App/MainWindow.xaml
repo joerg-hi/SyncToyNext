@@ -141,6 +141,11 @@
                                 <MenuItem Header="Rechten Ordner öffnen" Click="OpenRight_Click">
                                     <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xE838;" /></MenuItem.Icon>
                                 </MenuItem>
+                                <Separator />
+                                <MenuItem Header="Kopiertempo messen …" Click="SpeedTest_Click"
+                                          ToolTip="Kopiert eine Datei testweise in den rechten Ordner und zeigt das Tempo beider Kopierverfahren.">
+                                    <MenuItem.Icon><TextBlock Style="{StaticResource Glyph}" Text="&#xEC4A;" /></MenuItem.Icon>
+                                </MenuItem>
                             </ContextMenu>
                         </ListBox.ContextMenu>
                     </ListBox>

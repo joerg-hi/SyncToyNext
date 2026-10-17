@@ -225,8 +225,8 @@ public partial class PreviewWindow : Window
 
     private void UpdateSteps(Steps steps, FolderPair pair, PreviewProgress p)
     {
-        steps.Left.Detail = $"{p.LeftCount:N0} Einträge{(p.LeftDone ? " – fertig" : " bisher")} · {pair.LeftPath}";
-        steps.Right.Detail = $"{p.RightCount:N0} Einträge{(p.RightDone ? " – fertig" : " bisher")} · {pair.RightPath}";
+        steps.Left.Detail = ScanDetail(p.LeftCount, p.LeftDone, pair.LeftPath, p.Left);
+        steps.Right.Detail = ScanDetail(p.RightCount, p.RightDone, pair.RightPath, p.Right);
         steps.Left.State = p.LeftDone ? StepState.Done : StepState.Running;
         steps.Right.State = p.RightDone ? StepState.Done : StepState.Running;
 
@@ -243,6 +243,32 @@ public partial class PreviewWindow : Window
 
     }
 
+    /// <summary>Ab dieser Wartezeit ohne Rückmeldung wird darauf hingewiesen, dass das Laufwerk nicht antwortet.</summary>
+    private static readonly TimeSpan NoResponseHint = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// Text unter „Ordner einlesen“: Anzahl, Pfad, der gerade gelesene Unterordner und ein Hinweis,
+    /// wenn das Laufwerk länger nicht antwortet.
+    /// </summary>
+    private static string ScanDetail(int count, bool done, string root, ScanActivity? activity)
+    {
+        string text = $"{count:N0} Einträge{(done ? " – fertig" : " bisher")} · {root}";
+        if (done || activity is not { } a) return text;
+
+        if (a.Folder is not null)
+        {
+            text += $"\nLiest gerade: {(a.Folder.Length == 0 ? "(Hauptordner)" : PathUtil.ToDisplay(a.Folder))}";
+        }
+
+        if (a.SinceLastActivity >= NoResponseHint)
+        {
+            text += $"\nSeit {TransferEstimator.FormatDuration(a.SinceLastActivity)} keine Rückmeldung vom Laufwerk. " +
+                    "Es ist vielleicht im Ruhezustand, überlastet oder nicht erreichbar. „Abbrechen“ ist jederzeit möglich.";
+        }
+
+        return text;
+    }
+
     /// <summary>
     /// Für den Starttest: zeigt die Erklärung mit einem typischen Zwischenstand, damit sie auf einem
     /// Bildschirmfoto geprüft werden kann (die echte Vorschau ist im Test zu schnell fertig).
@@ -251,12 +277,13 @@ public partial class PreviewWindow : Window
     {
         var steps = CreateSteps(pair);
         StepsList.ItemsSource = steps.All;
-        UpdateSteps(steps, pair, new PreviewProgress(PreviewStage.Scanning, 274852, 120345, 154507, LeftDone: true));
+        UpdateSteps(steps, pair, new PreviewProgress(PreviewStage.Scanning, 277026, 274837, 2189, LeftDone: true,
+            Right: new ScanActivity("Thunderbird/Mail/pop.gmx.net", TimeSpan.FromSeconds(48))));
         WorkingTitle.Text = "Was passiert gerade?";
         SetWorking(true);
         Progress.Visibility = Visibility.Visible;
         Progress.IsIndeterminate = true;
-        ProgressText.Text = $"Lese „{pair.Name}“ ein … 274.852 Einträge";
+        ProgressText.Text = $"Lese „{pair.Name}“ ein … 277.026 Einträge";
     }
 
     /// <summary>

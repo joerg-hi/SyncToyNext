@@ -19,17 +19,19 @@ internal static class FileCopier
     /// Kopiert <paramref name="source"/> nach <paramref name="target"/> (eine noch nicht vorhandene, temporäre Datei).
     /// Schlägt <c>CopyFileEx</c> fehl, wird die angefangene Datei gelöscht und einmal blockweise neu kopiert.
     /// </summary>
-    public static void Copy(string source, string target, Action<long> reportBytes, CancellationToken ct)
+    /// <returns>Wie kopiert wurde; für das Protokoll.</returns>
+    public static CopyOutcome Copy(string source, string target, Action<long> reportBytes, CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows())
         {
-            CopyStream(source, target, reportBytes, ct);
-            return;
+            CopyBlockwise(source, target, reportBytes, ct);
+            return new CopyOutcome(Blockwise: true, FirstError: null);
         }
 
         try
         {
             CopyWindows(source, target, reportBytes, ct);
+            return new CopyOutcome(Blockwise: false, FirstError: null);
         }
         catch (IOException first)
         {
@@ -40,7 +42,8 @@ internal static class FileCopier
 
             try
             {
-                CopyStream(source, target, reportBytes, ct);
+                CopyBlockwise(source, target, reportBytes, ct);
+                return new CopyOutcome(Blockwise: true, FirstError: first.Message);
             }
             catch (IOException second)
             {
@@ -82,7 +85,7 @@ internal static class FileCopier
     private const uint THREAD_TERMINATE = 0x0001; // von CancelSynchronousIo verlangt
     private const int ERROR_OPERATION_ABORTED = 995;
 
-    private static void CopyWindows(string source, string target, Action<long> reportBytes, CancellationToken ct)
+    internal static void CopyWindows(string source, string target, Action<long> reportBytes, CancellationToken ct)
     {
         // Hängt ein Zugriff auf das Netzlaufwerk (Öffnen, Schreiben, Schließen), ruft Windows die Fortschrittsfunktion
         // nicht mehr auf und „Abbrechen“ käme nie an. Deshalb wird bei einem Abbruch zusätzlich die gerade wartende
@@ -134,7 +137,7 @@ internal static class FileCopier
 
     // ------------------------------------------------------------------ blockweise (andere Systeme, zweiter Versuch)
 
-    private static void CopyStream(string source, string target, Action<long> reportBytes, CancellationToken ct)
+    internal static void CopyBlockwise(string source, string target, Action<long> reportBytes, CancellationToken ct)
     {
         var sourceInfo = new FileInfo(source);
         using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, StreamBufferSize, FileOptions.SequentialScan))
@@ -159,3 +162,8 @@ internal static class FileCopier
         }
     }
 }
+
+/// <summary>Wie eine Datei kopiert wurde.</summary>
+/// <param name="Blockwise">Blockweise statt mit der Windows-Kopierfunktion (langsamer über das Netz).</param>
+/// <param name="FirstError">Fehler der Windows-Kopierfunktion, wegen dem blockweise kopiert wurde.</param>
+internal readonly record struct CopyOutcome(bool Blockwise, string? FirstError);
