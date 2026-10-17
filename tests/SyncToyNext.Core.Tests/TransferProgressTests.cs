@@ -68,6 +68,36 @@ public class TransferProgressTests
     }
 
     [Fact]
+    public void Run_RecordsDurationAndSpeedForLargeFiles()
+    {
+        using var t = new TestFolders();
+        using (var f = File.Create(t.PathOf(Left, "gross.bin"))) f.SetLength(9L * 1024 * 1024);
+        t.Write(Left, "klein.txt", "abc");
+
+        var plan = t.Preview();
+        t.Engine.Run(plan);
+
+        var large = plan.Operations.Single(o => o.TargetPath == "gross.bin");
+        Assert.Equal(OperationStatus.Succeeded, large.Status);
+        Assert.StartsWith("9 MB in 0:", large.Message);
+        Assert.Null(plan.Operations.Single(o => o.TargetPath == "klein.txt").Message);
+    }
+
+    [Fact]
+    public void SpeedTest_MeasuresAndRemovesTestCopies()
+    {
+        using var t = new TestFolders();
+        t.Write(Left, "test.bin", new string('x', 200_000));
+
+        var results = CopySpeedTest.Run(t.PathOf(Left, "test.bin"), t.Right);
+
+        var m = Assert.Single(results); // unter Linux nur blockweise
+        Assert.Null(m.Error);
+        Assert.Equal(200_000, m.Bytes);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(t.Right));
+    }
+
+    [Fact]
     public void Estimator_ComputesSpeedAndRemainingTime()
     {
         var estimator = new TransferEstimator(TimeSpan.FromSeconds(8));

@@ -41,6 +41,11 @@ public static class Program
             return ExitOk;
         }
 
+        if (options.Mode == Mode.SpeedTest)
+        {
+            return RunSpeedTest(options.SpeedTestFile!, options.SpeedTestFolder!);
+        }
+
         var store = new PairStore(options.ConfigPath);
         List<FolderPair> pairs;
         try
@@ -111,6 +116,36 @@ public static class Program
         }
 
         return anyErrors || cts.IsCancellationRequested ? ExitErrors : ExitOk;
+    }
+
+    /// <summary>Kopiert eine Datei mit beiden Verfahren in den Zielordner und zeigt das Tempo.</summary>
+    private static int RunSpeedTest(string file, string folder)
+    {
+        Console.WriteLine($"Geschwindigkeitstest: \"{file}\" nach \"{folder}\"");
+        Console.WriteLine("Die Testkopien werden danach wieder gelöscht.");
+        Console.WriteLine();
+
+        IReadOnlyList<CopySpeedTest.Measurement> results;
+        try
+        {
+            results = CopySpeedTest.Run(file, folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"FEHLER: {ex.Message}");
+            return ExitErrors;
+        }
+
+        foreach (var m in results)
+        {
+            Console.WriteLine(m.Error is null
+                ? $"  {m.Method,-40} {SyncLog.FormatBytes(m.Bytes)} in {TransferEstimator.FormatDuration(m.Duration)}  =  {SyncLog.FormatBytes((long)m.BytesPerSecond)}/s"
+                : $"  {m.Method,-40} FEHLER: {m.Error}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Zum Vergleich dieselbe Datei mit dem Explorer in denselben Ordner kopieren.");
+        return results.Any(r => r.Error is not null) ? ExitErrors : ExitOk;
     }
 
     /// <returns><c>false</c>, wenn Fehler aufgetreten sind.</returns>
@@ -255,6 +290,8 @@ public static class Program
               SyncToyNextCmd -R "Name"          Ein bestimmtes Ordnerpaar ausführen (auch: -R"Name")
               SyncToyNextCmd -P ["Name"]        Nur Vorschau anzeigen, nichts ändern
               SyncToyNextCmd -L                 Alle Ordnerpaare auflisten
+              SyncToyNextCmd --speedtest "Datei" "Zielordner"
+                                                Kopiertempo messen (z. B. zum NAS), beide Kopierverfahren
               SyncToyNextCmd -?                 Diese Hilfe
 
             Zusätzliche Optionen:
@@ -274,6 +311,7 @@ public static class Program
         Run,
         Preview,
         List,
+        SpeedTest,
     }
 
     private sealed class Options
@@ -283,6 +321,8 @@ public static class Program
         public bool Force { get; private set; }
         public bool NoLog { get; private set; }
         public string? ConfigPath { get; private set; }
+        public string? SpeedTestFile { get; private set; }
+        public string? SpeedTestFolder { get; private set; }
 
         public static Options Parse(string[] args)
         {
@@ -302,6 +342,15 @@ public static class Program
 
                 if (lower is "--force" or "-force" or "/force") { o.Force = true; continue; }
                 if (lower is "--no-log" or "/nolog") { o.NoLog = true; continue; }
+
+                if (lower is "--speedtest" or "/speedtest")
+                {
+                    if (i + 2 >= args.Length) throw new ArgumentException("Nach --speedtest fehlen Datei und Zielordner.");
+                    o.Mode = Mode.SpeedTest;
+                    o.SpeedTestFile = args[++i];
+                    o.SpeedTestFolder = args[++i];
+                    return o;
+                }
 
                 if (lower is "--config" or "/config")
                 {
