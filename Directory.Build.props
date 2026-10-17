@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Version>1.0.0</Version>
+    <Authors>joerg-hi</Authors>
+    <Product>SyncToyNext</Product>
+    <Copyright>Copyright (c) 2026 joerg-hi</Copyright>
+  </PropertyGroup>
+</Project>
