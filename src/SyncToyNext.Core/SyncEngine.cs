@@ -54,8 +54,8 @@ public sealed class SyncEngine
     /// <summary>
     /// Liest beide Ordner ein und berechnet, was bei der Ausführung passieren würde. Ändert nichts.
     /// </summary>
-    /// <param name="progress">Meldet die Anzahl der bisher eingelesenen Einträge beider Seiten.</param>
-    public SyncPlan Preview(FolderPair pair, CancellationToken cancellationToken = default, IProgress<int>? progress = null)
+    /// <param name="progress">Meldet Phase und Anzahl der bisher bearbeiteten Einträge.</param>
+    public SyncPlan Preview(FolderPair pair, CancellationToken cancellationToken = default, IProgress<PreviewProgress>? progress = null)
     {
         string? error = Validate(pair);
         if (error is not null) throw new InvalidOperationException(error);
@@ -64,7 +64,7 @@ public sealed class SyncEngine
         var leftWarnings = new List<string>();
         var rightWarnings = new List<string>();
         int leftCount = 0, rightCount = 0;
-        void Report() => progress?.Report(Volatile.Read(ref leftCount) + Volatile.Read(ref rightCount));
+        void Report() => progress?.Report(new PreviewProgress(PreviewStage.Scanning, Volatile.Read(ref leftCount) + Volatile.Read(ref rightCount)));
 
         // Beide Seiten gleichzeitig einlesen; schlägt eine fehl, wird die andere abgebrochen.
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -87,13 +87,31 @@ public sealed class SyncEngine
 
         cancellationToken.ThrowIfCancellationRequested();
         var warnings = leftWarnings.Concat(rightWarnings).ToList();
+        progress?.Report(new PreviewProgress(PreviewStage.Comparing, leftTask.Result.Count + rightTask.Result.Count));
 
-        return SyncPlanner.CreatePlan(pair, leftTask.Result, rightTask.Result, leftSnapshotTask.Result, rightSnapshotTask.Result,
-            (l, r) => ContentComparer.AreEqual(
+        // Inhaltsvergleiche (nur mit „Dateiinhalte prüfen“) zählen, damit der Fortschritt sichtbar bleibt.
+        int compared = 0;
+        long lastReport = 0;
+        bool ContentEqual(FileEntry l, FileEntry r)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            bool equal = ContentComparer.AreEqual(
                 PathUtil.ToFullPath(pair.LeftPath, l.RelativePath),
                 PathUtil.ToFullPath(pair.RightPath, r.RelativePath),
-                cancellationToken),
-            warnings);
+                cancellationToken);
+            compared++;
+            long now = Environment.TickCount64;
+            if (now - lastReport >= 200)
+            {
+                lastReport = now;
+                progress?.Report(new PreviewProgress(PreviewStage.CheckingContents, compared));
+            }
+
+            return equal;
+        }
+
+        return SyncPlanner.CreatePlan(pair, leftTask.Result, rightTask.Result, leftSnapshotTask.Result, rightSnapshotTask.Result,
+            ContentEqual, warnings);
     }
 
     private static Dictionary<string, FileEntry> ScanSide(
@@ -140,7 +158,22 @@ public sealed class SyncEngine
         var left = new Dictionary<string, FileEntry>(plan.LeftState, PathUtil.Comparer);
         var right = new Dictionary<string, FileEntry>(plan.RightState, PathUtil.Comparer);
 
-        foreach (var op in plan.Operations.Where(o => o.Status == OperationStatus.Succeeded))
+        // Ordner-Umbenennungen je Seite gesammelt in einem Durchlauf übertragen (bei vielen Umbenennungen
+        // und großen Beständen sonst sehr langsam), danach die übrigen Aktionen in Planreihenfolge.
+        var succeeded = plan.Operations.Where(o => o.Status == OperationStatus.Succeeded).ToList();
+        foreach (var (side, state) in new[] { (Side.Left, left), (Side.Right, right) })
+        {
+            var folderMoves = new Dictionary<string, string>(PathUtil.Comparer);
+            foreach (var op in succeeded.Where(o => o.Kind == OperationKind.RenameFolder && o.TargetSide == side))
+            {
+                folderMoves[op.SourcePath!] = op.TargetPath;
+            }
+
+            EntryTree.MoveTrees(state, folderMoves);
+            foreach (string target in folderMoves.Values) EntryTree.EnsureAncestors(state, target);
+        }
+
+        foreach (var op in succeeded.Where(o => o.Kind != OperationKind.RenameFolder))
         {
             Apply(op.TargetSide == Side.Left ? left : right, op);
         }
@@ -184,11 +217,6 @@ public sealed class SyncEngine
                 EntryTree.EnsureAncestors(state, op.TargetPath);
                 break;
             }
-
-            case OperationKind.RenameFolder:
-                EntryTree.MoveTree(state, op.SourcePath!, op.TargetPath);
-                EntryTree.EnsureAncestors(state, op.TargetPath);
-                break;
 
             case OperationKind.Copy:
             case OperationKind.Overwrite:

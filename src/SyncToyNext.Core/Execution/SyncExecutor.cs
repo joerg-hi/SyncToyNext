@@ -33,6 +33,18 @@ public sealed class SyncExecutor
         long totalBytes = plan.TotalBytesToCopy;
         int completed = 0;
 
+        // Höchstens alle 100 ms melden: Bei Tausenden kleiner Dateien würde die Oberfläche sonst mit
+        // Meldungen überflutet und dadurch selbst zur Bremse.
+        long lastReport = 0;
+        void Report(long bytes, string? item, bool force = false)
+        {
+            if (progress is null) return;
+            long now = Environment.TickCount64;
+            if (!force && now - lastReport < 100) return;
+            lastReport = now;
+            progress.Report(new SyncProgress(completed, selected.Count, bytes, totalBytes, item));
+        }
+
         foreach (var op in selected)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -41,13 +53,11 @@ public sealed class SyncExecutor
                 break;
             }
 
-            progress?.Report(new SyncProgress(completed, selected.Count, result.BytesCopied, totalBytes, op.DisplayPath));
+            Report(result.BytesCopied, op.DisplayPath);
 
             try
             {
-                ExecuteOne(plan.Pair, op, result, bytes =>
-                    progress?.Report(new SyncProgress(completed, selected.Count, bytes, totalBytes, op.DisplayPath)),
-                    cancellationToken);
+                ExecuteOne(plan.Pair, op, result, bytes => Report(bytes, op.DisplayPath), cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -71,7 +81,7 @@ public sealed class SyncExecutor
             op.Message = "Abgebrochen";
         }
 
-        progress?.Report(new SyncProgress(completed, selected.Count, result.BytesCopied, totalBytes, null));
+        Report(result.BytesCopied, null, force: true);
     }
 
     private void ExecuteOne(FolderPair pair, SyncOperation op, SyncResult result, Action<long> reportBytes, CancellationToken ct)

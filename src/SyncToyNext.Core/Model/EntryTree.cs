@@ -5,17 +5,29 @@ namespace SyncToyNext.Core.Model;
 /// </summary>
 internal static class EntryTree
 {
-    /// <summary>Verschiebt einen Ordner samt allem darunter auf einen neuen Pfad.</summary>
-    public static void MoveTree(Dictionary<string, FileEntry> entries, string from, string to)
+    /// <summary>
+    /// Verschiebt mehrere Teilbäume in einem einzigen Durchlauf (alter Ordnerpfad → neuer Ordnerpfad).
+    /// Liegt ein Eintrag unter mehreren Quellordnern, gilt der am tiefsten liegende.
+    /// </summary>
+    public static void MoveTrees(Dictionary<string, FileEntry> entries, IReadOnlyDictionary<string, string> moves)
     {
-        var keys = entries.Keys.Where(k => PathUtil.IsSameOrBelow(k, from)).ToList();
-        var moved = keys.Select(k => entries[k]).ToList();
-        foreach (string key in keys) entries.Remove(key);
-        foreach (var entry in moved)
+        if (moves.Count == 0) return;
+        var changes = new List<(string OldKey, string NewKey, FileEntry Entry)>();
+        foreach (var (key, entry) in entries)
         {
-            string newPath = to + entry.RelativePath[from.Length..];
-            entries[newPath] = entry.WithPath(newPath);
+            for (string? p = key; p is not null; p = PathUtil.GetParent(p))
+            {
+                if (moves.TryGetValue(p, out string? to))
+                {
+                    string newKey = to + key[p.Length..];
+                    changes.Add((key, newKey, entry.WithPath(newKey)));
+                    break;
+                }
+            }
         }
+
+        foreach (var change in changes) entries.Remove(change.OldKey);
+        foreach (var change in changes) entries[change.NewKey] = change.Entry;
     }
 
     /// <summary>Ergänzt fehlende übergeordnete Ordner eines Pfads.</summary>

@@ -120,6 +120,20 @@ public class OptionsTests
         Assert.Empty(t.Preview().Operations);
     }
 
+    [Fact]
+    public void StateFilesOfOriginalSyncToy_AreIgnoredAtAnyDepth()
+    {
+        using var t = new TestFolders();
+        t.Write(Left, "SyncToy_49c43346-ea3b-474d-8c33-aacacae950f6.dat", "x");
+        t.Write(Left, "Firma/SyncToy_49c43346-ea3b-474d-8c33-aacacae950f6.dat", "x");
+        t.Write(Left, "Firma/SyncToy_Notizen.dat", "keine GUID, normale Datei");
+
+        var plan = t.Preview();
+
+        var op = Assert.Single(plan.Operations, o => o.Kind == OperationKind.Copy);
+        Assert.Equal("Firma/SyncToy_Notizen.dat", op.TargetPath);
+    }
+
     [Theory]
     [InlineData("*", "anything.txt", true)]
     [InlineData("*.txt", "notes.TXT", true)]

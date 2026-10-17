@@ -55,10 +55,25 @@ public class PerformanceBehaviorTests
         t.Write(Right, "b.txt", "B");
         t.Write(Right, "c.txt", "C");
 
-        int last = 0;
-        t.Engine.Preview(t.Pair, progress: new SynchronousProgress(n => last = n));
+        var reports = new List<PreviewProgress>();
+        t.Engine.Preview(t.Pair, progress: new SynchronousProgress(reports.Add));
 
-        Assert.Equal(3, last);
+        Assert.Equal(3, reports.Last(r => r.Stage == PreviewStage.Scanning).Count);
+        Assert.Contains(reports, r => r.Stage == PreviewStage.Comparing && r.Count == 3);
+    }
+
+    [Fact]
+    public void Preview_ReportsContentChecks()
+    {
+        using var t = new TestFolders();
+        t.Pair.Options.CheckFileContents = true;
+        t.Write(Left, "a.txt", "same", minutes: 1);
+        t.Write(Right, "a.txt", "same", minutes: 9);
+
+        var reports = new List<PreviewProgress>();
+        t.Engine.Preview(t.Pair, progress: new SynchronousProgress(reports.Add));
+
+        Assert.Contains(reports, r => r.Stage == PreviewStage.CheckingContents && r.Count == 1);
     }
 
     [Fact]
@@ -125,14 +140,14 @@ public class PerformanceBehaviorTests
     }
 
     /// <summary>IProgress, das sofort im aufrufenden Thread meldet (Progress&lt;T&gt; würde das verzögern).</summary>
-    private sealed class SynchronousProgress : IProgress<int>
+    private sealed class SynchronousProgress : IProgress<PreviewProgress>
     {
-        private readonly Action<int> _action;
+        private readonly Action<PreviewProgress> _action;
         private readonly object _gate = new();
 
-        public SynchronousProgress(Action<int> action) => _action = action;
+        public SynchronousProgress(Action<PreviewProgress> action) => _action = action;
 
-        public void Report(int value)
+        public void Report(PreviewProgress value)
         {
             lock (_gate) _action(value);
         }

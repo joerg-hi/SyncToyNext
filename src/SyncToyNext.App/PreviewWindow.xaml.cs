@@ -25,10 +25,10 @@ public partial class PreviewWindow : Window
     private readonly SyncEngine _engine;
     private readonly SyncLog _log;
     private readonly Action<FolderPair> _onPairRun;
-    private readonly ObservableCollection<OperationRow> _rows = new();
+    private List<OperationRow> _rows = new();
     private readonly ObservableCollection<string> _warnings = new();
     private readonly List<(FolderPair Pair, SyncPlan Plan)> _plans = new();
-    private readonly ICollectionView _view;
+    private ICollectionView _view;
     private readonly DispatcherTimer _searchTimer;
     private CancellationTokenSource? _cts;
     private bool _busy;
@@ -45,9 +45,7 @@ public partial class PreviewWindow : Window
         _log = log;
         _onPairRun = onPairRun;
 
-        _view = CollectionViewSource.GetDefaultView(_rows);
-        _view.Filter = FilterRow;
-        OperationsGrid.ItemsSource = _view;
+        _view = CreateView(_rows);
         WarningsList.ItemsSource = _warnings;
         _warnings.CollectionChanged += (_, _) => UpdateWarnings();
 
@@ -65,8 +63,13 @@ public partial class PreviewWindow : Window
         SubHeaderText.Text = pairs.Count == 1
             ? $"{pairs[0].Name} · {UiHelpers.ActionTitle(pairs[0].Action)}"
             : string.Join(" · ", pairs.Select(p => p.Name));
-        SubHeaderText.ToolTip = string.Join(Environment.NewLine,
-            pairs.Select(p => $"{p.Name}: {p.LeftPath}  ⇄  {p.RightPath}"));
+        PairFoldersList.ItemsSource = pairs.Select(p => new PairFolders(
+            p.Name,
+            p.LeftPath,
+            p.RightPath,
+            p.Action == SyncAction.Synchronize ? "\uE8AB" : Glyphs.Forward,
+            UiHelpers.ActionTitle(p.Action),
+            pairs.Count > 1 ? Visibility.Visible : Visibility.Collapsed)).ToList();
 
         Loaded += async (_, _) => await StartAsync();
         Closing += OnClosing;
@@ -84,6 +87,7 @@ public partial class PreviewWindow : Window
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
 
+        var rows = new List<OperationRow>();
         foreach (var pair in _pairs)
         {
             if (token.IsCancellationRequested) break;
@@ -91,13 +95,26 @@ public partial class PreviewWindow : Window
             try
             {
                 string name = pair.Name;
-                var progress = new Progress<int>(n => ProgressText.Text = $"Lese „{name}“ ein … {n:N0} Einträge");
+                var progress = new Progress<PreviewProgress>(p => ProgressText.Text = p.Stage switch
+                {
+                    PreviewStage.Scanning => $"Lese „{name}“ ein … {p.Count:N0} Einträge",
+                    PreviewStage.Comparing => $"Vergleiche „{name}“ ({p.Count:N0} Einträge) …",
+                    PreviewStage.CheckingContents => $"Prüfe Dateiinhalte von „{name}“ … {p.Count:N0} Dateien verglichen",
+                    _ => ProgressText.Text,
+                });
                 var plan = await Task.Run(() => _engine.Preview(pair, token, progress), token);
                 _plans.Add((pair, plan));
-                foreach (var op in plan.Operations)
+
+                // Zeilen im Hintergrund vorbereiten; die Tabelle wird am Ende in einem Schritt befüllt
+                // (zeilenweises Einfügen ist bei sehr vielen Aktionen extrem langsam).
+                if (plan.Operations.Count > 0)
                 {
-                    op.PropertyChanged += Operation_PropertyChanged;
-                    _rows.Add(new OperationRow(pair, op));
+                    ProgressText.Text = $"Bereite {plan.Operations.Count:N0} Aktionen für die Anzeige vor …";
+                    rows.AddRange(await Task.Run(() => plan.Operations.Select(op =>
+                    {
+                        op.PropertyChanged += Operation_PropertyChanged;
+                        return new OperationRow(pair, op);
+                    }).ToList(), token));
                 }
 
                 foreach (string w in plan.Warnings) _warnings.Add(Prefix(pair, w));
@@ -112,6 +129,14 @@ public partial class PreviewWindow : Window
             }
         }
 
+        if (rows.Count > 0)
+        {
+            ProgressText.Text = $"Zeige {rows.Count:N0} Aktionen an …";
+            await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+            _rows = rows;
+            _view = CreateView(_rows);
+        }
+
         bool cancelled = token.IsCancellationRequested;
         SetBusy(false, cancelled ? "Vorschau abgebrochen." : "");
         SetTaskbar(TaskbarItemProgressState.None, 0);
@@ -124,6 +149,13 @@ public partial class PreviewWindow : Window
 
         // Auch ohne Aktionen wird ausgeführt: Dabei werden der Lauf vermerkt und die Statusdateien geschrieben.
         if (_autoRun) await RunAsync();
+    }
+
+    private ICollectionView CreateView(List<OperationRow> rows)
+    {
+        var view = new ListCollectionView(rows) { Filter = FilterRow };
+        OperationsGrid.ItemsSource = view;
+        return view;
     }
 
     private string Prefix(FolderPair pair, string text) => _pairs.Count > 1 ? $"{pair.Name}: {text}" : text;
@@ -475,4 +507,6 @@ public partial class PreviewWindow : Window
     }
 
     private sealed record SummaryChip(string Glyph, string Text);
+
+    private sealed record PairFolders(string Name, string Left, string Right, string ArrowGlyph, string ActionTitle, Visibility NameVisibility);
 }

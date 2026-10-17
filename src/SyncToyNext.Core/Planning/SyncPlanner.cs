@@ -141,28 +141,87 @@ public static class SyncPlanner
 
             var removedContent = GroupFilesBelow(snap.Values, removed.Select(e => e.RelativePath));
             var addedContent = GroupFilesBelow(current.Values, added);
-            var usedAdded = new List<string>();
-            var doneRemoved = new List<string>();
+
+            // Index: exakt gleiche Datei (Name relativ zum Ordner, Größe, Datum) → neue Ordner, die sie enthalten.
+            // Ein Ordner gilt nur als umbenannt, wenn mindestens die Hälfte seiner Dateien exakt übereinstimmt.
+            // Unter etwas mehr als der Hälfte seiner Dateien ist dann sicher eine solche; deren Treffer im Index
+            // sind die einzigen Kandidaten. So wird nicht jeder verschwundene mit jedem neuen Ordner verglichen.
+            var fileIndex = new Dictionary<(long Size, long Ticks, string Name), List<string>>(FileKeyComparer.Instance);
+            foreach (var (folder, files) in addedContent)
+            {
+                foreach (var (name, entry) in files)
+                {
+                    var key = FileKey(name, entry);
+                    if (!fileIndex.TryGetValue(key, out var list)) fileIndex[key] = list = new List<string>();
+                    list.Add(folder);
+                }
+            }
+
+            var usedAdded = new HashSet<string>(PathUtil.Comparer);
+            var doneRemoved = new HashSet<string>(PathUtil.Comparer);
+            var moves = new List<(string From, string To)>();
 
             foreach (var oldDir in removed)
             {
                 string from = oldDir.RelativePath;
-                if (doneRemoved.Any(d => PathUtil.IsSameOrBelow(from, d))) continue;
+                if (IsSameOrBelowAny(from, doneRemoved)) continue;
                 if (!removedContent.TryGetValue(from, out var oldFiles) || oldFiles.Count == 0) continue;
+                var candidates = new HashSet<string>(PathUtil.Comparer);
+                foreach (var (name, entry) in oldFiles.Take(oldFiles.Count / 2 + 1))
+                {
+                    if (fileIndex.TryGetValue(FileKey(name, entry), out var folders)) candidates.UnionWith(folders);
+                }
 
-                var matches = added
-                    .Where(a => !usedAdded.Any(u => PathUtil.IsSameOrBelow(a, u)))
-                    .Where(a => addedContent.TryGetValue(a, out var newFiles) && SameFolderContent(oldFiles, newFiles))
+                var matches = candidates
+                    .Where(a => addedContent[a].Count == oldFiles.Count)
+                    .Where(a => !IsSameOrBelowAny(a, usedAdded))
+                    .Where(a => SameFolderContent(oldFiles, addedContent[a]))
+                    .Take(2)
                     .ToList();
                 if (matches.Count != 1) continue;
 
                 string to = matches[0];
-                TryPropagateFolderRename(side, from, to);
+                if (CanPropagateFolderRename(side, from, to)) moves.Add((from, to));
 
                 // Auch wenn die andere Seite den Ordner nicht hat: Untergeordnete Ordner sind damit erledigt.
                 usedAdded.Add(to);
                 doneRemoved.Add(from);
             }
+
+            if (moves.Count == 0) return;
+
+            // Die Umbenennungen einer Seite überschneiden sich nicht; deshalb können alle Bestände in einem
+            // einzigen Durchlauf umgestellt werden (statt einmal je Umbenennung).
+            var map = moves.ToDictionary(m => m.From, m => m.To, PathUtil.Comparer);
+            EntryTree.MoveTrees(Files(side.Other()), map);
+            EntryTree.MoveTrees(Snap(side.Other()), map);
+            EntryTree.MoveTrees(Snap(side), map);
+        }
+
+        private static bool IsSameOrBelowAny(string path, HashSet<string> folders)
+        {
+            if (folders.Count == 0) return false;
+            for (string? p = path; p is not null; p = PathUtil.GetParent(p))
+            {
+                if (folders.Contains(p)) return true;
+            }
+
+            return false;
+        }
+
+        private static (long Size, long Ticks, string Name) FileKey(string relativeName, FileEntry entry) =>
+            (entry.Size, entry.LastWriteTimeUtc.Ticks, relativeName);
+
+        /// <summary>Vergleicht Dateischlüssel; der Name ohne Beachtung der Groß-/Kleinschreibung.</summary>
+        private sealed class FileKeyComparer : IEqualityComparer<(long Size, long Ticks, string Name)>
+        {
+            public static readonly FileKeyComparer Instance = new();
+
+            public bool Equals((long Size, long Ticks, string Name) x, (long Size, long Ticks, string Name) y) =>
+                x.Size == y.Size && x.Ticks == y.Ticks && string.Equals(x.Name, y.Name, StringComparison.OrdinalIgnoreCase);
+
+            public int GetHashCode((long Size, long Ticks, string Name) key) =>
+                HashCode.Combine(key.Size, key.Ticks, StringComparer.OrdinalIgnoreCase.GetHashCode(key.Name));
         }
 
         /// <summary>
@@ -205,13 +264,17 @@ public static class SyncPlanner
             return sameMetadata * 2 >= a.Count;
         }
 
-        private void TryPropagateFolderRename(Side side, string from, string to)
+        /// <summary>
+        /// Prüft, ob die andere Seite den Ordner noch unter dem alten Namen hat und der neue Name frei ist,
+        /// und plant dann die Umbenennung. Die Bestände werden danach gesammelt umgestellt (siehe oben).
+        /// </summary>
+        private bool CanPropagateFolderRename(Side side, string from, string to)
         {
             Side target = side.Other();
             var targetFiles = Files(target);
 
-            if (!targetFiles.TryGetValue(from, out var targetEntry) || !targetEntry.IsDirectory) return;
-            if (targetFiles.ContainsKey(to)) return;
+            if (!targetFiles.TryGetValue(from, out var targetEntry) || !targetEntry.IsDirectory) return false;
+            if (targetFiles.ContainsKey(to)) return false;
 
             _renames.Add(new SyncOperation(OperationKind.RenameFolder, target, to)
             {
@@ -219,10 +282,7 @@ public static class SyncPlanner
                 TargetEntry = targetEntry,
                 Reason = side == Side.Left ? "Ordner links umbenannt" : "Ordner rechts umbenannt",
             });
-
-            EntryTree.MoveTree(targetFiles, from, to);
-            EntryTree.MoveTree(Snap(target), from, to);
-            EntryTree.MoveTree(Snap(side), from, to);
+            return true;
         }
 
         // ------------------------------------------------------------------ Schreibweise
