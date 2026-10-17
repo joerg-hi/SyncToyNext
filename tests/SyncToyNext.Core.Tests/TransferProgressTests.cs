@@ -24,7 +24,8 @@ public class TransferProgressTests
         Assert.Contains(reports, r => r.CurrentOperation?.TargetPath == "gross.bin" && r.CurrentItem == "gross.bin");
         Assert.All(reports.Where(r => r.CurrentOperation is not null),
             r => Assert.InRange(r.CurrentBytes, 0, r.CurrentOperation!.Size));
-        var last = reports.Last();
+        Assert.True(reports.Last().SavingState); // zuletzt: Statusdateien speichern
+        var last = reports.Last(r => !r.SavingState);
         Assert.Null(last.CurrentOperation);
         Assert.Equal(total, last.BytesCopied);
         Assert.Equal(2, last.CompletedOperations);
@@ -44,7 +45,26 @@ public class TransferProgressTests
 
         Assert.Equal(1, result.Skipped);
         Assert.Equal(8, result.BytesCopied); // nur tatsächlich kopiert
-        Assert.Equal(plan.TotalBytesToCopy, reports.Last().BytesCopied); // Fortschritt trotzdem vollständig
+        Assert.Equal(plan.TotalBytesToCopy, reports.Last(r => !r.SavingState).BytesCopied); // Fortschritt trotzdem vollständig
+    }
+
+    [Fact]
+    public void Run_StopsAfterCurrentOperation_WhenCancelled()
+    {
+        using var t = new TestFolders();
+        for (int i = 0; i < 20; i++) t.Write(Left, $"datei{i:00}.txt", new string('x', 1000 + i));
+
+        var plan = t.Preview();
+        using var cts = new CancellationTokenSource();
+        // Meldungen sind gedrosselt; die erste kommt aber immer (Beginn der ersten Aktion).
+        var result = t.Engine.Run(plan, new SynchronousProgress(_ => cts.Cancel()), cts.Token);
+
+        Assert.True(result.WasCancelled);
+        Assert.InRange(result.Succeeded, 0, 1);
+        Assert.Equal(20 - result.Succeeded, result.Skipped);
+
+        // Nicht ausgeführte Dateien werden beim nächsten Mal wieder angeboten.
+        Assert.Equal(result.Skipped, t.Preview().Operations.Count);
     }
 
     [Fact]

@@ -156,6 +156,7 @@ public sealed class SyncEngine
     {
         var result = new SyncResult(plan) { StartedUtc = DateTime.UtcNow };
         _executor.Execute(plan, result, progress, cancellationToken);
+        progress?.Report(new SyncProgress(0, 0, 0, 0, null, SavingState: true));
         UpdateSnapshots(plan, result);
         result.FinishedUtc = DateTime.UtcNow;
         return result;

@@ -159,6 +159,8 @@ internal sealed class SmokeTest
         await Capture(run, $"{mode}-6-ergebnis");
         run.Close();
 
+        ok &= await CancelLargeCopyAsync(main, log, mode);
+
         var scheduler = new SchedulerInfoWindow(pairs[0].Name) { Owner = main };
         scheduler.Show();
         await Capture(scheduler, $"{mode}-7-zeitsteuerung");
@@ -171,6 +173,40 @@ internal sealed class SmokeTest
 
         main.Close();
         return ok;
+    }
+
+    /// <summary>
+    /// Bricht das Kopieren einer großen Datei ab, so wie beim Schließen mit „Ja, abbrechen“: Das Fenster
+    /// muss sich danach zügig schließen, und es darf keine halbe Datei zurückbleiben.
+    /// </summary>
+    private async Task<bool> CancelLargeCopyAsync(Window owner, SyncLog log, string mode)
+    {
+        string set = Path.Combine(_root, "abbruch-" + mode);
+        string left = Path.Combine(set, "links");
+        string right = Path.Combine(set, "rechts");
+        Directory.CreateDirectory(left);
+        Directory.CreateDirectory(right);
+        using (var stream = File.Create(Path.Combine(left, "gross.bin")))
+        {
+            stream.SetLength(2L * 1024 * 1024 * 1024);
+        }
+
+        var pair = new FolderPair { Name = "Abbruch", LeftPath = left, RightPath = right, Action = SyncAction.Echo };
+        var window = new PreviewWindow(new[] { pair }, autoRun: true, new SyncEngine(), log, _ => { }) { Owner = owner };
+        window.Show();
+        await WaitUntil(() => window.IsCopyingLargeFile || !window.IsVisible, TimeSpan.FromSeconds(30));
+        bool started = window.IsCopyingLargeFile;
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        window.CancelAndCloseForTest();
+        await WaitUntil(() => !window.IsVisible, TimeSpan.FromSeconds(20));
+        bool closed = !window.IsVisible;
+        bool complete = File.Exists(Path.Combine(right, "gross.bin"));
+        bool leftovers = Directory.EnumerateFiles(right).Any(f => f.EndsWith(".stn-tmp", StringComparison.OrdinalIgnoreCase));
+        _log.Add($"{mode}: Abbruch – Kopie lief {started}, Fenster geschlossen {closed} nach {clock.Elapsed.TotalSeconds:0.0} s, " +
+                 $"Datei vollständig kopiert {complete}, Reste {leftovers}");
+        if (!closed) window.Close();
+        return closed && !leftovers && (!started || !complete);
     }
 
     private static async Task WaitUntil(Func<bool> condition, TimeSpan timeout)

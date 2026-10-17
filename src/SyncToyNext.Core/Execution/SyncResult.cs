@@ -38,6 +38,7 @@ public sealed class SyncResult
 /// <param name="CurrentItem">Angezeigter Pfad der laufenden Aktion, <c>null</c> am Ende.</param>
 /// <param name="CurrentOperation">Die laufende Aktion, <c>null</c> am Ende.</param>
 /// <param name="CurrentBytes">Bereits kopierte Bytes der laufenden Datei.</param>
+/// <param name="SavingState">Die Aktionen sind beendet, die Statusdateien werden gespeichert (übrige Werte ohne Bedeutung).</param>
 public readonly record struct SyncProgress(
     int CompletedOperations,
     int TotalOperations,
@@ -45,4 +46,5 @@ public readonly record struct SyncProgress(
     long TotalBytes,
     string? CurrentItem,
     SyncOperation? CurrentOperation = null,
-    long CurrentBytes = 0);
+    long CurrentBytes = 0,
+    bool SavingState = false);

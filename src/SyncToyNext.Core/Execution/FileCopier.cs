@@ -65,7 +65,42 @@ internal static class FileCopier
         string existingFileName, string newFileName, CopyProgressRoutine? progressRoutine,
         IntPtr data, ref int cancel, uint copyFlags);
 
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenThread(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint threadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CancelSynchronousIo(IntPtr thread);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private const uint THREAD_TERMINATE = 0x0001; // von CancelSynchronousIo verlangt
+    private const int ERROR_OPERATION_ABORTED = 995;
+
     private static void CopyWindows(string source, string target, Action<long> reportBytes, CancellationToken ct)
+    {
+        // Hängt ein Zugriff auf das Netzlaufwerk (Öffnen, Schreiben, Schließen), ruft Windows die Fortschrittsfunktion
+        // nicht mehr auf und „Abbrechen“ käme nie an. Deshalb wird bei einem Abbruch zusätzlich die gerade wartende
+        // Ein-/Ausgabe dieses Threads abgebrochen.
+        IntPtr thread = OpenThread(THREAD_TERMINATE, false, GetCurrentThreadId());
+        var registration = thread == IntPtr.Zero ? default : ct.Register(() => CancelSynchronousIo(thread));
+        try
+        {
+            CopyWindowsCore(source, target, reportBytes, ct);
+        }
+        finally
+        {
+            registration.Dispose(); // wartet auf einen laufenden Aufruf, erst danach das Handle schließen
+            if (thread != IntPtr.Zero) CloseHandle(thread);
+        }
+    }
+
+    private static void CopyWindowsCore(string source, string target, Action<long> reportBytes, CancellationToken ct)
     {
         int cancel = 0;
         CopyProgressRoutine callback = (total, transferred, _, _, _, _, _, _, _) =>
@@ -82,7 +117,10 @@ internal static class FileCopier
         GC.KeepAlive(callback);
 
         if (ok) return;
-        if (error == ERROR_REQUEST_ABORTED || ct.IsCancellationRequested) throw new OperationCanceledException(ct);
+        if (error is ERROR_REQUEST_ABORTED or ERROR_OPERATION_ABORTED || ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
+        }
         throw new IOException($"{new Win32Exception(error).Message} (Fehler {error})", error);
     }
 
