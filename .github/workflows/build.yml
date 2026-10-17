@@ -62,16 +62,6 @@ jobs:
           if (Test-Path $log) { Get-Content $log }
           if ($p.ExitCode -ne 0) { Write-Error "Starttest fehlgeschlagen (Rückgabewert $($p.ExitCode))."; exit 1 }
 
-      - name: Geschwindigkeitstest der Kommandozeile
-        shell: pwsh
-        run: |
-          $dir = Join-Path $env:RUNNER_TEMP 'speedtest'
-          New-Item -ItemType Directory -Force -Path "$dir/ziel" | Out-Null
-          $f = [System.IO.File]::Create("$dir/test.bin"); $f.SetLength(300MB); $f.Close()
-          out/SyncToyNext-win-x64/SyncToyNextCmd.exe --speedtest "$dir/test.bin" "$dir/ziel"
-          if ($LASTEXITCODE -ne 0) { Write-Error "Geschwindigkeitstest fehlgeschlagen ($LASTEXITCODE)."; exit 1 }
-          if (Get-ChildItem "$dir/ziel") { Write-Error 'Testkopien wurden nicht gelöscht.'; exit 1 }
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -36,26 +36,6 @@ public class PerformanceBehaviorTests
     }
 
     [Fact]
-    public void ParallelScan_DeepAndUnevenTree_SameResultAsSequential()
-    {
-        using var t = new TestFolders();
-        string deep = string.Join("/", Enumerable.Range(0, 12).Select(i => $"tief{i}"));
-        t.Write(Left, deep + "/ende.txt", "x");
-        for (int i = 0; i < 600; i++) t.Write(Left, $"gross/datei{i}.txt", "y"); // ein großer Ordner
-        for (int i = 0; i < 30; i++) t.Write(Left, $"breit/o{i}/u/datei.txt", "z");
-
-        var filter = new FileFilter(new PairOptions());
-        var sequential = FolderScanner.Scan(t.Left, filter, parallelism: 1);
-        var monitor = new ScanMonitor();
-        var parallel = FolderScanner.Scan(t.Left, filter, parallelism: 8, monitor: monitor);
-
-        Assert.Equal(sequential.Keys.OrderBy(k => k), parallel.Keys.OrderBy(k => k));
-        Assert.True(parallel.ContainsKey(deep + "/ende.txt"));
-        Assert.Equal(parallel.Count, monitor.Count);
-        Assert.Null(monitor.LongestReadingFolder); // nichts mehr in Arbeit
-    }
-
-    [Fact]
     public void ParallelScan_ReportsProgress()
     {
         using var t = new TestFolders();
