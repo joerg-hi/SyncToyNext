@@ -83,7 +83,10 @@
                                                Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
                                     <TextBlock DockPanel.Dock="Left" Text="Links" Style="{StaticResource CaptionText}" FontWeight="SemiBold"
                                                VerticalAlignment="Center" Margin="8,0,8,0" />
-                                    <TextBlock Text="{Binding Left}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock DockPanel.Dock="Left" Text="{Binding LeftName}" FontWeight="SemiBold"
+                                               VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding Left}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"
+                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
                                 </DockPanel>
                             </Border>
                             <TextBlock Grid.Column="2" Style="{StaticResource Glyph}" Text="{Binding ArrowGlyph}"
@@ -95,7 +98,10 @@
                                                Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
                                     <TextBlock DockPanel.Dock="Left" Text="Rechts" Style="{StaticResource CaptionText}" FontWeight="SemiBold"
                                                VerticalAlignment="Center" Margin="8,0,8,0" />
-                                    <TextBlock Text="{Binding Right}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock DockPanel.Dock="Left" Text="{Binding RightName}" FontWeight="SemiBold"
+                                               VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding Right}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"
+                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
                                 </DockPanel>
                             </Border>
                         </Grid>

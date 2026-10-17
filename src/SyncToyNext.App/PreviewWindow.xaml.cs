@@ -66,7 +66,9 @@ public partial class PreviewWindow : Window
         PairFoldersList.ItemsSource = pairs.Select(p => new PairFolders(
             p.Name,
             p.LeftPath,
+            UiHelpers.FolderName(p.LeftPath),
             p.RightPath,
+            UiHelpers.FolderName(p.RightPath),
             p.Action == SyncAction.Synchronize ? "\uE8AB" : Glyphs.Forward,
             UiHelpers.ActionTitle(p.Action),
             pairs.Count > 1 ? Visibility.Visible : Visibility.Collapsed)).ToList();
@@ -508,5 +510,7 @@ public partial class PreviewWindow : Window
 
     private sealed record SummaryChip(string Glyph, string Text);
 
-    private sealed record PairFolders(string Name, string Left, string Right, string ArrowGlyph, string ActionTitle, Visibility NameVisibility);
+    private sealed record PairFolders(
+        string Name, string Left, string LeftName, string Right, string RightName,
+        string ArrowGlyph, string ActionTitle, Visibility NameVisibility);
 }
