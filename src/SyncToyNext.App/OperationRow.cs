@@ -11,6 +11,7 @@ namespace SyncToyNext.App;
 public sealed class OperationRow : INotifyPropertyChanged
 {
     private bool _isEditable = true;
+    private string? _runningText;
 
     public OperationRow(FolderPair pair, SyncOperation operation)
     {
@@ -42,11 +43,13 @@ public sealed class OperationRow : INotifyPropertyChanged
         ? SyncLog.FormatBytes(Operation.Size)
         : "";
 
-    public string StatusGlyph => Glyphs.ForStatus(Operation.Status);
+    public string StatusGlyph => Operation.Status == OperationStatus.Pending && _runningText is not null
+        ? Glyphs.Play
+        : Glyphs.ForStatus(Operation.Status);
 
     public string StatusText => Operation.Status switch
     {
-        OperationStatus.Pending => "",
+        OperationStatus.Pending => _runningText ?? "",
         OperationStatus.Succeeded => string.IsNullOrEmpty(Operation.Message) ? "Erledigt" : $"Erledigt – {Operation.Message}",
         OperationStatus.Failed => $"Fehler: {Operation.Message}",
         OperationStatus.Skipped => $"Übersprungen: {Operation.Message}",
@@ -62,6 +65,19 @@ public sealed class OperationRow : INotifyPropertyChanged
             if (_isEditable == value) return;
             _isEditable = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEditable)));
+        }
+    }
+
+    /// <summary>Text für die gerade laufende Aktion, z. B. „Wird kopiert … 47 %“; <c>null</c> = läuft nicht.</summary>
+    public string? RunningText
+    {
+        get => _runningText;
+        set
+        {
+            if (_runningText == value) return;
+            _runningText = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusText)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusGlyph)));
         }
     }
 

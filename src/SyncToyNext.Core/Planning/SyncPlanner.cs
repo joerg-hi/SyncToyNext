@@ -505,7 +505,7 @@ public static class SyncPlanner
                 if (Identical(l, r, sl, sr)) return;
                 if (lChanged)
                 {
-                    AddCopy(Side.Right, l, r, sl is null ? "Links neu bzw. erste Synchronisation" : "Links geändert");
+                    AddCopy(Side.Right, l, r, sl is null ? "Erster Abgleich: rechts verschieden, links gilt" : "Links geändert");
                 }
             }
             else if (l is not null)

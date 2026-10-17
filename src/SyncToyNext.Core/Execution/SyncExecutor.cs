@@ -11,6 +11,9 @@ namespace SyncToyNext.Core.Execution;
 /// </summary>
 public sealed class SyncExecutor
 {
+    /// <summary>Ab dieser Größe wird der Beginn einer Kopie ohne Drosselung gemeldet.</summary>
+    private const long LargeFileBytes = 8L * 1024 * 1024;
+
     private readonly IRecycleBin _recycleBin;
     private readonly HashSet<string> _knownDirectories = new(StringComparer.OrdinalIgnoreCase);
 
@@ -32,17 +35,19 @@ public sealed class SyncExecutor
 
         long totalBytes = plan.TotalBytesToCopy;
         int completed = 0;
+        long doneBytes = 0; // fertig bearbeitete Kopien, auch übersprungene oder fehlgeschlagene
 
         // Höchstens alle 100 ms melden: Bei Tausenden kleiner Dateien würde die Oberfläche sonst mit
         // Meldungen überflutet und dadurch selbst zur Bremse.
         long lastReport = 0;
-        void Report(long bytes, string? item, bool force = false)
+        void Report(SyncOperation? op, long currentBytes, bool force = false)
         {
             if (progress is null) return;
             long now = Environment.TickCount64;
             if (!force && now - lastReport < 100) return;
             lastReport = now;
-            progress.Report(new SyncProgress(completed, selected.Count, bytes, totalBytes, item));
+            progress.Report(new SyncProgress(completed, selected.Count, doneBytes + currentBytes, totalBytes,
+                op?.DisplayPath, op, currentBytes));
         }
 
         foreach (var op in selected)
@@ -53,11 +58,12 @@ public sealed class SyncExecutor
                 break;
             }
 
-            Report(result.BytesCopied, op.DisplayPath);
+            // Große Dateien sofort melden, damit ihr Name nicht wegen der Drosselung fehlt.
+            Report(op, 0, force: op.Size >= LargeFileBytes);
 
             try
             {
-                ExecuteOne(plan.Pair, op, result, bytes => Report(bytes, op.DisplayPath), cancellationToken);
+                ExecuteOne(plan.Pair, op, result, bytes => Report(op, bytes), cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -73,6 +79,7 @@ public sealed class SyncExecutor
             }
 
             completed++;
+            if (op.Kind is OperationKind.Copy or OperationKind.Overwrite) doneBytes += op.Size;
         }
 
         foreach (var op in selected.Where(o => o.Status == OperationStatus.Pending))
@@ -81,9 +88,10 @@ public sealed class SyncExecutor
             op.Message = "Abgebrochen";
         }
 
-        Report(result.BytesCopied, null, force: true);
+        Report(null, 0, force: true);
     }
 
+    /// <param name="reportBytes">Meldet die bisher kopierten Bytes der laufenden Datei.</param>
     private void ExecuteOne(FolderPair pair, SyncOperation op, SyncResult result, Action<long> reportBytes, CancellationToken ct)
     {
         string targetRoot = op.TargetSide == Side.Left ? pair.LeftPath : pair.RightPath;
@@ -148,9 +156,8 @@ public sealed class SyncExecutor
                     return;
                 }
 
-                long before = result.BytesCopied;
-                CopyFile(sourceInfo, targetInfo, recycle, copied => reportBytes(before + copied), ct);
-                result.BytesCopied = before + op.Size;
+                CopyFile(sourceInfo, targetInfo, recycle, reportBytes, ct);
+                result.BytesCopied += op.Size;
 
                 var written = new FileInfo(target);
                 op.ResultEntry = new FileEntry(op.TargetPath, false, written.Length, written.LastWriteTimeUtc, written.Attributes);
@@ -184,7 +191,7 @@ public sealed class SyncExecutor
 
         try
         {
-            FileCopier.Copy(source.FullName, temp, source.Length, reportBytes, ct);
+            FileCopier.Copy(source.FullName, temp, reportBytes, ct);
 
             if (target.Exists)
             {

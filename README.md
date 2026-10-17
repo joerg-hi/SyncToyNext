@@ -47,6 +47,8 @@ moderne Oberfläche im Windows-11-Stil und ist quelloffen (MIT-Lizenz).
   und ein Hinweis, wenn ein Ordner nicht erreichbar ist (z. B. USB-Laufwerk nicht angeschlossen).
 - **Vorschau** mit Zusammenfassung, Suche und Filter (z. B. „Nur Fehler“). Ein Doppelklick zeigt die
   Datei im Explorer.
+- **Ausführlicher Fortschritt beim Ausführen:** Aktion x von y, kopierte Menge, Tempo (MB/s), geschätzte Restzeit
+  und bei großen Dateien ein eigener Balken für die laufende Datei. Die Tabelle blättert auf Wunsch mit.
 - **Fortschritt in der Taskleiste**, damit man ihn auch bei minimiertem Fenster sieht.
 - **Drag & Drop:** Zieht man zwei Ordner aus dem Explorer auf das Fenster, entsteht ein neues Paar.
   Ordner lassen sich auch in die Pfadfelder ziehen.
