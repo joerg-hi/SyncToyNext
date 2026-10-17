@@ -11,9 +11,8 @@ namespace SyncToyNext.Core.Execution;
 /// </summary>
 public sealed class SyncExecutor
 {
-    private const int CopyBufferSize = 1024 * 1024;
-
     private readonly IRecycleBin _recycleBin;
+    private readonly HashSet<string> _knownDirectories = new(StringComparer.OrdinalIgnoreCase);
 
     public SyncExecutor(IRecycleBin recycleBin) => _recycleBin = recycleBin;
 
@@ -23,6 +22,7 @@ public sealed class SyncExecutor
         IProgress<SyncProgress>? progress,
         CancellationToken cancellationToken)
     {
+        _knownDirectories.Clear();
         var selected = plan.Operations.Where(o => o.IsSelected).ToList();
         foreach (var op in plan.Operations.Where(o => !o.IsSelected))
         {
@@ -33,6 +33,18 @@ public sealed class SyncExecutor
         long totalBytes = plan.TotalBytesToCopy;
         int completed = 0;
 
+        // Höchstens alle 100 ms melden: Bei Tausenden kleiner Dateien würde die Oberfläche sonst mit
+        // Meldungen überflutet und dadurch selbst zur Bremse.
+        long lastReport = 0;
+        void Report(long bytes, string? item, bool force = false)
+        {
+            if (progress is null) return;
+            long now = Environment.TickCount64;
+            if (!force && now - lastReport < 100) return;
+            lastReport = now;
+            progress.Report(new SyncProgress(completed, selected.Count, bytes, totalBytes, item));
+        }
+
         foreach (var op in selected)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -41,13 +53,11 @@ public sealed class SyncExecutor
                 break;
             }
 
-            progress?.Report(new SyncProgress(completed, selected.Count, result.BytesCopied, totalBytes, op.DisplayPath));
+            Report(result.BytesCopied, op.DisplayPath);
 
             try
             {
-                ExecuteOne(plan.Pair, op, result, bytes =>
-                    progress?.Report(new SyncProgress(completed, selected.Count, bytes, totalBytes, op.DisplayPath)),
-                    cancellationToken);
+                ExecuteOne(plan.Pair, op, result, bytes => Report(bytes, op.DisplayPath), cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -71,7 +81,7 @@ public sealed class SyncExecutor
             op.Message = "Abgebrochen";
         }
 
-        progress?.Report(new SyncProgress(completed, selected.Count, result.BytesCopied, totalBytes, null));
+        Report(result.BytesCopied, null, force: true);
     }
 
     private void ExecuteOne(FolderPair pair, SyncOperation op, SyncResult result, Action<long> reportBytes, CancellationToken ct)
@@ -92,10 +102,21 @@ public sealed class SyncExecutor
             case OperationKind.Rename:
             {
                 string oldPath = PathUtil.ToFullPath(targetRoot, op.SourcePath!);
+                bool caseOnly = PathUtil.Comparer.Equals(op.SourcePath, op.TargetPath);
                 if (!Unchanged(oldPath, op.TargetEntry)) { Skip(op, "Datei wurde seit der Vorschau verändert"); return; }
-                if (File.Exists(target) || Directory.Exists(target)) { Skip(op, "Ziel existiert bereits"); return; }
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.Move(oldPath, target);
+                if (!caseOnly && (File.Exists(target) || Directory.Exists(target))) { Skip(op, "Ziel existiert bereits"); return; }
+                MoveEntry(oldPath, target, isDirectory: false, caseOnly);
+                Succeed(op);
+                break;
+            }
+
+            case OperationKind.RenameFolder:
+            {
+                string oldPath = PathUtil.ToFullPath(targetRoot, op.SourcePath!);
+                bool caseOnly = PathUtil.Comparer.Equals(op.SourcePath, op.TargetPath);
+                if (!Directory.Exists(oldPath)) { Skip(op, "Ordner existiert nicht mehr"); return; }
+                if (!caseOnly && (File.Exists(target) || Directory.Exists(target))) { Skip(op, "Ziel existiert bereits"); return; }
+                MoveEntry(oldPath, target, isDirectory: true, caseOnly);
                 Succeed(op);
                 break;
             }
@@ -110,24 +131,29 @@ public sealed class SyncExecutor
             case OperationKind.Copy:
             case OperationKind.Overwrite:
             {
-                string source = PathUtil.ToFullPath(sourceRoot, op.SourcePath!);
-                if (!Unchanged(source, op.SourceEntry)) { Skip(op, "Quelldatei wurde seit der Vorschau verändert"); return; }
+                // Je eine Abfrage für Quelle und Ziel liefert alles Nötige (Existenz, Größe, Datum, Attribute).
+                var sourceInfo = new FileInfo(PathUtil.ToFullPath(sourceRoot, op.SourcePath!));
+                if (!Matches(sourceInfo, op.SourceEntry)) { Skip(op, "Quelldatei wurde seit der Vorschau verändert"); return; }
 
-                if (op.Kind == OperationKind.Copy && (File.Exists(target) || Directory.Exists(target)))
+                var targetInfo = new FileInfo(target);
+                if (op.Kind == OperationKind.Copy && targetInfo.Exists)
                 {
                     Skip(op, "Zieldatei ist inzwischen vorhanden");
                     return;
                 }
 
-                if (op.Kind == OperationKind.Overwrite && !Unchanged(target, op.TargetEntry))
+                if (op.Kind == OperationKind.Overwrite && !Matches(targetInfo, op.TargetEntry))
                 {
                     Skip(op, "Zieldatei wurde seit der Vorschau verändert");
                     return;
                 }
 
                 long before = result.BytesCopied;
-                CopyFile(source, target, recycle, copied => reportBytes(before + copied), ct);
+                CopyFile(sourceInfo, targetInfo, recycle, copied => reportBytes(before + copied), ct);
                 result.BytesCopied = before + op.Size;
+
+                var written = new FileInfo(target);
+                op.ResultEntry = new FileEntry(op.TargetPath, false, written.Length, written.LastWriteTimeUtc, written.Attributes);
                 Succeed(op);
                 break;
             }
@@ -149,58 +175,72 @@ public sealed class SyncExecutor
     /// Kopiert über eine temporäre Datei im Zielordner, damit bei einem Abbruch nie eine halbe Datei
     /// unter dem echten Namen liegt. Zeitstempel und Attribute werden übernommen.
     /// </summary>
-    private void CopyFile(string source, string target, bool recycle, Action<long> reportBytes, CancellationToken ct)
+    private void CopyFile(FileInfo source, FileInfo target, bool recycle, Action<long> reportBytes, CancellationToken ct)
     {
-        string directory = Path.GetDirectoryName(target)!;
-        Directory.CreateDirectory(directory);
+        string directory = target.DirectoryName!;
+        EnsureDirectory(directory);
         string temp = Path.Combine(directory,
-            $"{Path.GetFileName(target)}.{Guid.NewGuid().ToString("N")[..8]}{FileFilter.TempFileSuffix}");
+            $"{target.Name}.{Guid.NewGuid().ToString("N")[..8]}{FileFilter.TempFileSuffix}");
 
-        var sourceInfo = new FileInfo(source);
         try
         {
-            using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBufferSize, FileOptions.SequentialScan))
-            using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBufferSize))
+            FileCopier.Copy(source.FullName, temp, source.Length, reportBytes, ct);
+
+            if (target.Exists)
             {
-                var buffer = new byte[CopyBufferSize];
-                long copied = 0;
-                int read;
-                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                if ((target.Attributes & FileAttributes.ReadOnly) != 0)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    output.Write(buffer, 0, read);
-                    copied += read;
-                    reportBytes(copied);
+                    File.SetAttributes(target.FullName, target.Attributes & ~FileAttributes.ReadOnly);
                 }
+
+                if (recycle) _recycleBin.MoveToRecycleBin(target.FullName);
             }
 
-            File.SetLastWriteTimeUtc(temp, sourceInfo.LastWriteTimeUtc);
-            if (OperatingSystem.IsWindows())
-            {
-                File.SetCreationTimeUtc(temp, sourceInfo.CreationTimeUtc);
-            }
-
-            if (File.Exists(target))
-            {
-                ClearReadOnly(target);
-                if (recycle) _recycleBin.MoveToRecycleBin(target);
-            }
-
-            File.Move(temp, target, overwrite: true);
+            File.Move(temp, target.FullName, overwrite: true);
         }
         catch
         {
             TryDelete(temp);
             throw;
         }
+    }
 
-        const FileAttributes copiedAttributes = FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System | FileAttributes.Archive;
-        var attributes = sourceInfo.Attributes & copiedAttributes;
-        if (attributes != 0)
+    /// <summary>
+    /// Legt einen Ordner an. Bereits angelegte oder vorhandene Ordner werden gemerkt, damit beim Kopieren
+    /// vieler Dateien in denselben Ordner nicht jedes Mal nachgefragt wird (spart Netzwerkzugriffe).
+    /// </summary>
+    private void EnsureDirectory(string directory)
+    {
+        if (_knownDirectories.Contains(directory)) return;
+        Directory.CreateDirectory(directory);
+        _knownDirectories.Add(directory);
+    }
+
+    /// <summary>
+    /// Verschiebt eine Datei oder einen Ordner. Ändert sich nur die Schreibweise, geht es über einen
+    /// Zwischennamen, weil Windows sonst Quelle und Ziel als identisch ansieht.
+    /// </summary>
+    private static void MoveEntry(string oldPath, string newPath, bool isDirectory, bool caseOnly)
+    {
+        string? parent = Path.GetDirectoryName(newPath);
+        if (parent is not null) Directory.CreateDirectory(parent);
+
+        if (caseOnly)
         {
-            try { File.SetAttributes(target, attributes); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* Attribute sind nicht kritisch */ }
+            string temp = $"{newPath}.{Guid.NewGuid().ToString("N")[..8]}{FileFilter.TempFileSuffix}";
+            Move(oldPath, temp, isDirectory);
+            Move(temp, newPath, isDirectory);
         }
+        else
+        {
+            Move(oldPath, newPath, isDirectory);
+        }
+    }
+
+    private static void Move(string from, string to, bool isDirectory)
+    {
+        if (isDirectory) Directory.Move(from, to);
+        else File.Move(from, to);
     }
 
     private void RemoveFile(string path, bool recycle)
@@ -211,12 +251,10 @@ public sealed class SyncExecutor
     }
 
     /// <summary>Prüft, ob die Datei noch dem bei der Planung gesehenen Stand entspricht.</summary>
-    private static bool Unchanged(string fullPath, FileEntry? expected)
-    {
-        if (expected is null) return false;
-        var info = new FileInfo(fullPath);
-        return info.Exists && info.Length == expected.Size && info.LastWriteTimeUtc == expected.LastWriteTimeUtc;
-    }
+    private static bool Unchanged(string fullPath, FileEntry? expected) => Matches(new FileInfo(fullPath), expected);
+
+    private static bool Matches(FileInfo info, FileEntry? expected) =>
+        expected is not null && info.Exists && info.Length == expected.Size && info.LastWriteTimeUtc == expected.LastWriteTimeUtc;
 
     private static void ClearReadOnly(string path)
     {

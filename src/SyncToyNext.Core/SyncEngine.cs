@@ -54,26 +54,99 @@ public sealed class SyncEngine
     /// <summary>
     /// Liest beide Ordner ein und berechnet, was bei der Ausführung passieren würde. Ändert nichts.
     /// </summary>
-    public SyncPlan Preview(FolderPair pair, CancellationToken cancellationToken = default)
+    /// <param name="progress">Meldet Phase und Anzahl der bisher bearbeiteten Einträge.</param>
+    public SyncPlan Preview(FolderPair pair, CancellationToken cancellationToken = default, IProgress<PreviewProgress>? progress = null)
     {
         string? error = Validate(pair);
         if (error is not null) throw new InvalidOperationException(error);
 
-        var warnings = new List<string>();
         var filter = new FileFilter(pair.Options);
-        var left = FolderScanner.Scan(pair.LeftPath, filter, warnings, cancellationToken);
-        var right = FolderScanner.Scan(pair.RightPath, filter, warnings, cancellationToken);
-        var leftSnapshot = SnapshotStore.Load(pair.LeftPath, pair.Id);
-        var rightSnapshot = SnapshotStore.Load(pair.RightPath, pair.Id);
+        var leftWarnings = new List<string>();
+        var rightWarnings = new List<string>();
+        int leftCount = 0, rightCount = 0, leftDone = 0, rightDone = 0;
+        void Report()
+        {
+            int l = Volatile.Read(ref leftCount), r = Volatile.Read(ref rightCount);
+            progress?.Report(new PreviewProgress(PreviewStage.Scanning, l + r, l, r,
+                Volatile.Read(ref leftDone) == 1, Volatile.Read(ref rightDone) == 1));
+        }
 
-        var plan = SyncPlanner.CreatePlan(pair, left, right, leftSnapshot, rightSnapshot,
-            (l, r) => ContentComparer.AreEqual(
+        // Beide Seiten gleichzeitig einlesen; schlägt eine fehl, wird die andere abgebrochen.
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var leftTask = Task.Run(() =>
+        {
+            var result = ScanSide(pair.LeftPath, filter, leftWarnings, cts, n => { Volatile.Write(ref leftCount, n); Report(); });
+            Volatile.Write(ref leftCount, result.Count);
+            Volatile.Write(ref leftDone, 1);
+            Report();
+            return result;
+        });
+        var rightTask = Task.Run(() =>
+        {
+            var result = ScanSide(pair.RightPath, filter, rightWarnings, cts, n => { Volatile.Write(ref rightCount, n); Report(); });
+            Volatile.Write(ref rightCount, result.Count);
+            Volatile.Write(ref rightDone, 1);
+            Report();
+            return result;
+        });
+        var leftSnapshotTask = Task.Run(() => SnapshotStore.Load(pair.LeftPath, pair.Id));
+        var rightSnapshotTask = Task.Run(() => SnapshotStore.Load(pair.RightPath, pair.Id));
+
+        try
+        {
+            Task.WaitAll(leftTask, rightTask, leftSnapshotTask, rightSnapshotTask);
+        }
+        catch (AggregateException ex)
+        {
+            // Den eigentlichen Fehler weitergeben, nicht den Folge-Abbruch der anderen Seite.
+            var first = ex.Flatten().InnerExceptions.FirstOrDefault(e => e is not OperationCanceledException)
+                        ?? ex.Flatten().InnerExceptions[0];
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var warnings = leftWarnings.Concat(rightWarnings).ToList();
+        progress?.Report(new PreviewProgress(PreviewStage.Comparing, leftTask.Result.Count + rightTask.Result.Count,
+            leftTask.Result.Count, rightTask.Result.Count, true, true));
+
+        // Inhaltsvergleiche (nur mit „Dateiinhalte prüfen“) zählen, damit der Fortschritt sichtbar bleibt.
+        int compared = 0;
+        long lastReport = 0;
+        bool ContentEqual(FileEntry l, FileEntry r)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            bool equal = ContentComparer.AreEqual(
                 PathUtil.ToFullPath(pair.LeftPath, l.RelativePath),
                 PathUtil.ToFullPath(pair.RightPath, r.RelativePath),
-                cancellationToken),
-            warnings);
+                cancellationToken);
+            compared++;
+            long now = Environment.TickCount64;
+            if (now - lastReport >= 200)
+            {
+                lastReport = now;
+                progress?.Report(new PreviewProgress(PreviewStage.CheckingContents, compared,
+                    leftTask.Result.Count, rightTask.Result.Count, true, true));
+            }
 
-        return plan;
+            return equal;
+        }
+
+        return SyncPlanner.CreatePlan(pair, leftTask.Result, rightTask.Result, leftSnapshotTask.Result, rightSnapshotTask.Result,
+            ContentEqual, warnings);
+    }
+
+    private static Dictionary<string, FileEntry> ScanSide(
+        string root, FileFilter filter, List<string> warnings, CancellationTokenSource cts, Action<int> progress)
+    {
+        try
+        {
+            return FolderScanner.Scan(root, filter, warnings, cts.Token, progress);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            cts.Cancel();
+            throw;
+        }
     }
 
     /// <summary>
@@ -93,37 +166,90 @@ public sealed class SyncEngine
         Run(Preview(pair, cancellationToken), progress, cancellationToken);
 
     /// <summary>
-    /// Neuer Stand je Seite = tatsächlicher Inhalt nach der Ausführung. Für Pfade, deren Aktion nicht
-    /// erfolgreich war (Fehler, abgewählt, abgebrochen), bleibt der alte Stand erhalten. So gilt die
-    /// Änderung beim nächsten Lauf weiterhin als offen und wird erneut angeboten.
+    /// Neuer Stand je Seite = eingelesener Stand aus der Vorschau plus die Wirkung der erfolgreichen Aktionen.
+    /// Die Ordner werden dafür nicht erneut eingelesen (auf Netzlaufwerken würde das die Laufzeit verdoppeln).
+    /// Für Pfade, deren Aktion nicht erfolgreich war (Fehler, abgewählt, abgebrochen), bleibt der alte Stand
+    /// erhalten. So gilt die Änderung beim nächsten Lauf weiterhin als offen und wird erneut angeboten.
+    /// Änderungen, die jemand während des Laufs außerhalb der Aktionen macht, werden so ebenfalls erst beim
+    /// nächsten Lauf als Änderung erkannt und nicht stillschweigend als „abgeglichen“ vermerkt.
     /// </summary>
     private static void UpdateSnapshots(SyncPlan plan, SyncResult result)
     {
         var pair = plan.Pair;
-        var filter = new FileFilter(pair.Options);
-        Dictionary<string, FileEntry> left, right;
-        try
+        var left = new Dictionary<string, FileEntry>(plan.LeftState, PathUtil.Comparer);
+        var right = new Dictionary<string, FileEntry>(plan.RightState, PathUtil.Comparer);
+
+        // Ordner-Umbenennungen je Seite gesammelt in einem Durchlauf übertragen (bei vielen Umbenennungen
+        // und großen Beständen sonst sehr langsam), danach die übrigen Aktionen in Planreihenfolge.
+        var succeeded = plan.Operations.Where(o => o.Status == OperationStatus.Succeeded).ToList();
+        foreach (var (side, state) in new[] { (Side.Left, left), (Side.Right, right) })
         {
-            left = FolderScanner.Scan(pair.LeftPath, filter);
-            right = FolderScanner.Scan(pair.RightPath, filter);
+            var folderMoves = new Dictionary<string, string>(PathUtil.Comparer);
+            foreach (var op in succeeded.Where(o => o.Kind == OperationKind.RenameFolder && o.TargetSide == side))
+            {
+                folderMoves[op.SourcePath!] = op.TargetPath;
+            }
+
+            EntryTree.MoveTrees(state, folderMoves);
+            foreach (string target in folderMoves.Values) EntryTree.EnsureAncestors(state, target);
         }
-        catch (Exception ex)
+
+        foreach (var op in succeeded.Where(o => o.Kind != OperationKind.RenameFolder))
         {
-            result.Warnings.Add($"Der Stand konnte nach der Ausführung nicht eingelesen werden: {ex.Message}");
-            return;
+            Apply(op.TargetSide == Side.Left ? left : right, op);
         }
 
         foreach (var op in plan.Operations.Where(o => o.Status != OperationStatus.Succeeded))
         {
             foreach (string path in op.AffectedPaths())
             {
-                Revert(left, plan.LeftSnapshot, path);
-                Revert(right, plan.RightSnapshot, path);
+                if (op.Kind == OperationKind.RenameFolder)
+                {
+                    // Ein nicht umbenannter Ordner betrifft auch alles darin.
+                    RevertTree(left, plan.LeftSnapshot, path);
+                    RevertTree(right, plan.RightSnapshot, path);
+                }
+                else
+                {
+                    Revert(left, plan.LeftSnapshot, path);
+                    Revert(right, plan.RightSnapshot, path);
+                }
             }
         }
 
         Save(pair.LeftPath, pair.Id, left.Values, result);
         Save(pair.RightPath, pair.Id, right.Values, result);
+    }
+
+    /// <summary>Überträgt die Wirkung einer erfolgreichen Aktion auf den Stand der Zielseite.</summary>
+    private static void Apply(Dictionary<string, FileEntry> state, SyncOperation op)
+    {
+        switch (op.Kind)
+        {
+            case OperationKind.CreateFolder:
+                state[op.TargetPath] = new FileEntry(op.TargetPath, true, 0, default, FileAttributes.Directory);
+                EntryTree.EnsureAncestors(state, op.TargetPath);
+                break;
+
+            case OperationKind.Rename:
+            {
+                var entry = state.Remove(op.SourcePath!, out var old) ? old : op.TargetEntry;
+                if (entry is not null) state[op.TargetPath] = entry.WithPath(op.TargetPath);
+                EntryTree.EnsureAncestors(state, op.TargetPath);
+                break;
+            }
+
+            case OperationKind.Copy:
+            case OperationKind.Overwrite:
+                state[op.TargetPath] = op.ResultEntry ?? op.SourceEntry!.WithPath(op.TargetPath);
+                EntryTree.EnsureAncestors(state, op.TargetPath);
+                break;
+
+            case OperationKind.Delete:
+            case OperationKind.DeleteFolder:
+                state.Remove(op.TargetPath);
+                break;
+        }
     }
 
     private static void Revert(Dictionary<string, FileEntry> state, IReadOnlyDictionary<string, FileEntry>? oldSnapshot, string path)
@@ -132,6 +258,20 @@ public sealed class SyncEngine
             state[path] = old;
         else
             state.Remove(path);
+    }
+
+    private static void RevertTree(Dictionary<string, FileEntry> state, IReadOnlyDictionary<string, FileEntry>? oldSnapshot, string folder)
+    {
+        foreach (string key in state.Keys.Where(k => PathUtil.IsSameOrBelow(k, folder)).ToList())
+        {
+            state.Remove(key);
+        }
+
+        if (oldSnapshot is null) return;
+        foreach (var entry in oldSnapshot.Values.Where(e => PathUtil.IsSameOrBelow(e.RelativePath, folder)))
+        {
+            state[entry.RelativePath] = entry;
+        }
     }
 
     private static void Save(string root, Guid pairId, IEnumerable<FileEntry> entries, SyncResult result)

@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>SyncToyNextCmd</AssemblyName>
     <RootNamespace>SyncToyNext.Cmd</RootNamespace>
+    <ApplicationIcon>..\SyncToyNext.App\Assets\SyncToyNext.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\SyncToyNext.Core\SyncToyNext.Core.csproj" />

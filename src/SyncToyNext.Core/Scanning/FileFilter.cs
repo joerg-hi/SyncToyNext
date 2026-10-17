@@ -58,11 +58,21 @@ public sealed class FileFilter
 
         if (name.EndsWith(TempFileSuffix, StringComparison.OrdinalIgnoreCase)) return false;
         if (!relativePath.Contains('/') && Snapshots.SnapshotStore.IsSnapshotFileName(name)) return false;
+        if (IsOriginalSyncToyFile(name)) return false;
         if ((attributes & _excludedAttributes) != 0) return false;
 
         if (!_include.Any(r => Matches(r, relativePath, name))) return false;
         return !_exclude.Any(r => Matches(r, relativePath, name));
     }
+
+    /// <summary>
+    /// Statusdateien des originalen SyncToy („SyncToy_{GUID}.dat“). Sie liegen im Wurzelordner jedes früheren
+    /// Ordnerpaars, also auch in Unterordnern, und dürfen nie mitkopiert werden.
+    /// </summary>
+    internal static bool IsOriginalSyncToyFile(string name) =>
+        name.StartsWith("SyncToy_", StringComparison.OrdinalIgnoreCase)
+        && name.EndsWith(".dat", StringComparison.OrdinalIgnoreCase)
+        && Guid.TryParse(name.AsSpan(8, name.Length - 12), out _);
 
     private static bool Matches(Regex regex, string relativePath, string name) =>
         regex.IsMatch(name) || regex.IsMatch(relativePath);
