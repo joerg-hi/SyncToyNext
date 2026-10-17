@@ -13,13 +13,19 @@ namespace SyncToyNext.App;
 
 public partial class MainWindow : Window
 {
-    private readonly PairStore _store = new();
+    private readonly PairStore _store;
     private readonly SyncLog _log = new();
     private readonly SyncEngine _engine = new();
     private readonly ObservableCollection<PairItem> _items = new();
 
     public MainWindow()
+        : this(new PairStore())
     {
+    }
+
+    internal MainWindow(PairStore store)
+    {
+        _store = store;
         InitializeComponent();
         WindowPlacement.Attach(this, "Main", restorePosition: true);
         PairList.ItemsSource = _items;
